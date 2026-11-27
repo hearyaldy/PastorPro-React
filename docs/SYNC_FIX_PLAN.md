@@ -562,3 +562,15 @@ beside the landing page in their GitHub repository.
 - [ ] Verify authenticated workflows with the user's own account.
 
 Current destinations and publication instructions: `LANDING_PAGE.md`.
+
+## WebApp dark mode — 2026-11-27
+
+- [x] Reproduce on the live Pages app: toggling adds `.dark` but the canvas
+      stays light because `:root[data-light-theme]` overrides `.dark` variables.
+- [x] Use `:root.dark` so the later dark palette overrides every light preset;
+      set native browser `color-scheme` for both modes.
+- [x] Browser regression verifies all five light palettes, actual dark canvas
+      and text colors, browser color scheme, refresh persistence and restoration
+      of the previous light preset. TypeScript/build and whitespace checks pass.
+- [x] GitHub Pages built commit `f8eed5d`; live Chrome regression passes all
+      palette/theme persistence checks along with public routes and navigation.

@@ -4,6 +4,7 @@
 @layer base {
   :root,
   :root[data-light-theme="forest"] {
+    color-scheme: light;
     --bg-canvas: #F2F0E9;
     --bg-surface: #FFFFFF;
     --bg-subtle: #EAE6DC;
@@ -78,7 +79,8 @@
     --accent-soft: #ECFCCB;
   }
 
-  .dark {
+  :root.dark {
+    color-scheme: dark;
     --bg-canvas: #0B1117;
     --bg-surface: #111922;
     --bg-subtle: #17212B;

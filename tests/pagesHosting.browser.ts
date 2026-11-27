@@ -32,6 +32,25 @@ test('GitHub Pages artifact loads app assets and public pages under its reposito
     if (process.env.PAGES_TEST_ORIGIN) await page.locator('.webapp-link').first().click();
     else await page.goto(`${origin}/PastorPro-React/app/`);
     await page.getByRole('heading', { name: 'Unified pastoral ledgers, monthly Borang B, and mission governance.', exact: true }).waitFor();
+    // Exercise the actual cascade: a dark class alone can hide palette conflicts.
+    await page.setViewportSize({ width: 1280, height: 900 });
+    for (const [label, canvas] of [
+      ['Alabaster Forest', '#F2F0E9'], ['Nordic Navy', '#E8EEF6'],
+      ['Coastal Teal', '#E5F0EE'], ['Rosewood Parchment', '#F4EAEB'],
+      ['Sandstone Olive', '#F1EDE0'],
+    ]) {
+      await page.getByRole('button', { name: `Select ${label} theme`, exact: true }).click();
+      await page.waitForFunction(expected => getComputedStyle(document.documentElement).getPropertyValue('--bg-canvas').trim().toLowerCase() === expected.toLowerCase() && getComputedStyle(document.documentElement).colorScheme === 'light', canvas);
+      await page.getByRole('button', { name: 'Toggle dark mode', exact: true }).click();
+      await page.waitForFunction(() => getComputedStyle(document.documentElement).getPropertyValue('--bg-canvas').trim().toLowerCase() === '#0b1117' && getComputedStyle(document.documentElement).colorScheme === 'dark');
+      assert.equal(await page.locator('html').evaluate(node => getComputedStyle(node).backgroundColor), 'rgb(11, 17, 23)');
+      assert.equal(await page.locator('html').evaluate(node => getComputedStyle(node).color), 'rgb(241, 245, 249)');
+    }
+    await page.reload();
+    await page.waitForFunction(() => getComputedStyle(document.documentElement).getPropertyValue('--bg-canvas').trim().toLowerCase() === '#0b1117');
+    await page.getByRole('button', { name: 'Toggle dark mode', exact: true }).click();
+    await page.waitForFunction(() => getComputedStyle(document.documentElement).getPropertyValue('--bg-canvas').trim().toLowerCase() === '#f1ede0');
+    await page.setViewportSize({ width: 390, height: 844 });
     await page.getByRole('link', { name: 'Privacy policy', exact: true }).click();
     assert.equal(new URL(page.url()).pathname, '/PastorPro-React/app/privacy-policy/');
     await page.getByRole('heading', { name: 'Privacy policy', exact: true }).waitFor();
