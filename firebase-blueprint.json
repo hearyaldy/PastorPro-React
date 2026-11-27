@@ -29,6 +29,8 @@
         "roleTitle": { "type": "string", "maxLength": 80 },
         "isAdmin": { "type": "boolean" },
         "level": { "type": "integer" },
+        "unionId": { "type": "string", "maxLength": 128 },
+        "unionName": { "type": "string", "maxLength": 120 },
         "missionId": { "type": "string", "maxLength": 128 },
         "missionName": { "type": "string", "maxLength": 120 },
         "regionId": { "type": "string", "maxLength": 128 },
@@ -39,17 +41,37 @@
         "churchName": { "type": "string", "maxLength": 120 },
         "isPremium": { "type": "boolean" },
         "isActive": { "type": "boolean" },
+        "approvalStatus": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "approvedBy": { "type": "string", "maxLength": 128 },
+        "approvalNote": { "type": "string", "maxLength": 300 },
         "onboardingCompleted": { "type": "boolean" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["uid", "email", "displayName", "userRole", "level", "isActive", "onboardingCompleted", "createdAt", "updatedAt"]
     },
-    "Mission": {
-      "title": "Mission",
-      "description": "Top-level Adventist Mission entity (e.g., Sabah Adventist Mission).",
+    "Union": {
+      "title": "Union",
+      "description": "Top-level Adventist Union entity (e.g., Malaysia Union Mission) overseeing Missions.",
       "type": "object",
       "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "code": { "type": "string", "minLength": 1, "maxLength": 24 },
+        "country": { "type": "string", "maxLength": 80 },
+        "headquarters": { "type": "string", "maxLength": 200 },
+        "isActive": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "code", "isActive", "createdAt", "updatedAt"]
+    },
+    "Mission": {
+      "title": "Mission",
+      "description": "Adventist Mission entity (e.g., Sabah Adventist Mission) belonging to a Union.",
+      "type": "object",
+      "properties": {
+        "unionId": { "type": "string", "maxLength": 128 },
+        "unionName": { "type": "string", "maxLength": 120 },
         "name": { "type": "string", "minLength": 1, "maxLength": 120 },
         "code": { "type": "string", "minLength": 1, "maxLength": 24 },
         "country": { "type": "string", "maxLength": 80 },
@@ -443,6 +465,27 @@
       },
       "required": ["key", "updatedAt"]
     },
+    "MinistryTeamMember": {
+      "title": "MinistryTeamMember",
+      "description": "Local church elder, deacon, or ministry team member tracked by a pastor.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "maxLength": 128 },
+        "missionId": { "type": "string", "maxLength": 128 },
+        "districtId": { "type": "string", "maxLength": 128 },
+        "churchId": { "type": "string", "maxLength": 128 },
+        "churchName": { "type": "string", "maxLength": 160 },
+        "fullName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "role": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "phone": { "type": "string", "maxLength": 40 },
+        "email": { "type": "string", "maxLength": 200 },
+        "notes": { "type": "string", "maxLength": 1000 },
+        "isActive": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "missionId", "fullName", "role", "isActive", "createdAt", "updatedAt"]
+    },
     "AdminActivity": {
       "title": "AdminActivity",
       "description": "Audit log of administrative actions across users, hierarchy, and reports.",
@@ -460,8 +503,9 @@
     }
   },
   "firestore": {
-    "/users/{userId}": { "schema": { "$ref": "#/entities/User" }, "description": "User profiles, roles, and hierarchy links" },
-    "/missions/{missionId}": { "schema": { "$ref": "#/entities/Mission" }, "description": "Top-level missions" },
+    "/users/{userId}": { "schema": { "$ref": "#/entities/User" }, "description": "User profiles, roles, login approval, and hierarchy links" },
+    "/unions/{unionId}": { "schema": { "$ref": "#/entities/Union" }, "description": "Top-level unions overseeing missions" },
+    "/missions/{missionId}": { "schema": { "$ref": "#/entities/Mission" }, "description": "Missions belonging to unions" },
     "/missions/{missionId}/departments/{departmentId}": { "schema": { "$ref": "#/entities/MissionDepartment" }, "description": "Mission subcollection departments" },
     "/missions/{missionId}/reports/{reportId}": { "schema": { "$ref": "#/entities/MissionReportSummary" }, "description": "Mission subcollection reports" },
     "/regions/{regionId}": { "schema": { "$ref": "#/entities/Region" }, "description": "Regions under missions" },
@@ -469,6 +513,7 @@
     "/churches/{churchId}": { "schema": { "$ref": "#/entities/Church" }, "description": "Churches under districts" },
     "/staff/{staffId}": { "schema": { "$ref": "#/entities/Staff" }, "description": "Mission staff directory" },
     "/departments/{departmentId}": { "schema": { "$ref": "#/entities/Department" }, "description": "Church departments and URLs" },
+    "/ministry_team/{memberId}": { "schema": { "$ref": "#/entities/MinistryTeamMember" }, "description": "Local church elders and pastoral ministry team members" },
     "/financial_reports/{reportId}": { "schema": { "$ref": "#/entities/FinancialReport" }, "description": "Monthly church financial reports" },
     "/fam_data/{famId}": { "schema": { "$ref": "#/entities/FamData" }, "description": "1:1 FAM breakdown linked to financial reports" },
     "/quarterly_department_report/{reportId}": { "schema": { "$ref": "#/entities/QuarterlyDepartmentReport" }, "description": "Quarterly Kanak-Kanak, Penatalayanan, SSPM, and Wanita reports" },

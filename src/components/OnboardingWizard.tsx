@@ -78,6 +78,8 @@ export function OnboardingWizard() {
       await updateOwnProfile({
         displayName: displayName.trim().slice(0, 120),
         phone: phone.trim().slice(0, 40),
+        unionId: mission?.unionId || '',
+        unionName: mission?.unionName || '',
         missionId: mission?.id || '',
         missionName: mission?.name || '',
         regionId: region?.id || '',

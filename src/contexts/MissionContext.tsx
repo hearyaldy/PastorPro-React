@@ -18,9 +18,11 @@ import type {
   MissionResource,
   Region,
   StaffMember,
+  Union,
 } from '../types';
 
 interface MissionContextValue {
+  unions: Union[];
   missions: Mission[];
   regions: Region[];
   districts: District[];
@@ -42,6 +44,7 @@ const MissionContext = createContext<MissionContextValue | undefined>(undefined)
 
 export function MissionProvider({ children }: { children: React.ReactNode }) {
   const { firebaseUser } = useAuth();
+  const [unions, setUnions] = useState<Union[]>([]);
   const [missions, setMissions] = useState<Mission[]>([]);
   const [regions, setRegions] = useState<Region[]>([]);
   const [districts, setDistricts] = useState<District[]>([]);
@@ -54,6 +57,7 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!firebaseUser) {
+      setUnions([]);
       setMissions([]);
       setRegions([]);
       setDistricts([]);
@@ -69,6 +73,15 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
     setLoadingHierarchy(true);
 
     const unsubs = [
+      onSnapshot(
+        query(collection(db, 'unions'), orderBy('name', 'asc')),
+        (snap) => {
+          setUnions(
+            snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Union, 'id'>) })),
+          );
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'unions'),
+      ),
       onSnapshot(
         query(collection(db, 'missions'), orderBy('name', 'asc')),
         (snap) => {
@@ -177,6 +190,7 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
   return (
     <MissionContext.Provider
       value={{
+        unions,
         missions,
         regions,
         districts,

@@ -66,6 +66,8 @@ export const ROLE_META: Record<
   },
 };
 
+export type UserApprovalStatus = 'pending' | 'approved' | 'rejected';
+
 export interface UserProfile {
   uid: string;
   email: string;
@@ -77,6 +79,8 @@ export interface UserProfile {
   roleTitle?: string;
   isAdmin?: boolean;
   level: number;
+  unionId?: string;
+  unionName?: string;
   missionId?: string;
   missionName?: string;
   regionId?: string;
@@ -87,6 +91,9 @@ export interface UserProfile {
   churchName?: string;
   isPremium?: boolean;
   isActive: boolean;
+  approvalStatus?: UserApprovalStatus;
+  approvedBy?: string;
+  approvalNote?: string;
   onboardingCompleted: boolean;
   createdAt?: unknown;
   updatedAt?: unknown;
@@ -94,6 +101,7 @@ export interface UserProfile {
 
 export interface RoleCapabilities {
   canManageUsers: boolean;
+  canManageUnions: boolean;
   canManageMissions: boolean;
   canManageHierarchy: boolean;
   canManageStaff: boolean;
@@ -126,9 +134,10 @@ export function normalizeUserRole(raw: Record<string, unknown>): UserRole {
 }
 
 export function getCapabilities(user: UserProfile | null): RoleCapabilities {
-  if (!user || !user.isActive) {
+  if (!user || !user.isActive || user.approvalStatus === 'pending' || user.approvalStatus === 'rejected') {
     return {
       canManageUsers: false,
+      canManageUnions: false,
       canManageMissions: false,
       canManageHierarchy: false,
       canManageStaff: false,
@@ -156,6 +165,7 @@ export function getCapabilities(user: UserProfile | null): RoleCapabilities {
 
   return {
     canManageUsers: isSuperOrAdmin || isMissionAdmin,
+    canManageUnions: isSuperOrAdmin,
     canManageMissions: isSuperOrAdmin,
     canManageHierarchy: isSuperOrAdmin || isMissionAdmin,
     canManageStaff: isSuperOrAdmin || isMissionAdmin,
@@ -173,8 +183,21 @@ export function getCapabilities(user: UserProfile | null): RoleCapabilities {
   };
 }
 
+export interface Union {
+  id: string;
+  name: string;
+  code: string;
+  country?: string;
+  headquarters?: string;
+  isActive: boolean;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+}
+
 export interface Mission {
   id: string;
+  unionId?: string;
+  unionName?: string;
   name: string;
   code: string;
   country?: string;
@@ -539,5 +562,22 @@ export interface AppSettings {
   appVersion?: string;
   maintenanceMode?: boolean;
   updatedBy?: string;
+  updatedAt?: unknown;
+}
+
+export interface MinistryTeamMember {
+  id: string;
+  userId: string;
+  missionId: string;
+  districtId?: string;
+  churchId?: string;
+  churchName?: string;
+  fullName: string;
+  role: string;
+  phone?: string;
+  email?: string;
+  notes?: string;
+  isActive: boolean;
+  createdAt?: unknown;
   updatedAt?: unknown;
 }

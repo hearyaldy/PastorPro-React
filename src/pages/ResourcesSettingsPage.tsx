@@ -1,63 +1,61 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   addDoc,
   collection,
   deleteDoc,
   doc,
   serverTimestamp,
-  setDoc,
 } from 'firebase/firestore';
-import { ExternalLink, FileText, Moon, Plus, Sun, Trash2 } from 'lucide-react';
+import { ExternalLink, FileText, FolderOpen, Plus, Search, Trash2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useMission } from '../contexts/MissionContext';
-import { LIGHT_THEME_PRESETS, useTheme } from '../contexts/ThemeContext';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { useToast } from '../components/Toast';
-import { ROLE_META } from '../types';
 
 export function ResourcesSettingsPage() {
-  const { profile, capabilities, updateOwnProfile } = useAuth();
+  const { profile, capabilities } = useAuth();
   const { resources, missions, logAdminActivity } = useMission();
-  const { theme, lightTheme, setTheme, setLightTheme } = useTheme();
   const { notify } = useToast();
 
-  // Profile form
-  const [displayName, setDisplayName] = useState(profile?.displayName || '');
-  const [phone, setPhone] = useState(profile?.phone || '');
-  const [photoURL, setPhotoURL] = useState(profile?.photoURL || '');
-  const [savingProfile, setSavingProfile] = useState(false);
+  // Library filters
+  const [search, setSearch] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('all');
 
   // Resource creation (Admin/Editor)
   const [resTitle, setResTitle] = useState('');
   const [resCategory, setResCategory] = useState('Ministerial Manual');
   const [resUrl, setResUrl] = useState('');
   const [resDesc, setResDesc] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
-  // Allowed domains setting
-  const [domainsInput, setDomainsInput] = useState('sabahadventist.org, gmail.com');
+  const categories = useMemo(() => {
+    const set = new Set<string>();
+    resources.forEach((r) => {
+      if (r.category) set.add(r.category);
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [resources]);
 
-  const handleSaveProfile = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!displayName.trim()) return;
-    setSavingProfile(true);
-    try {
-      await updateOwnProfile({
-        displayName: displayName.trim().slice(0, 120),
-        phone: phone.trim().slice(0, 40),
-        photoURL: photoURL.trim().slice(0, 500),
-      });
-      notify('Profile updated.', 'success');
-    } catch {
-      notify('Failed to update profile.', 'error');
-    } finally {
-      setSavingProfile(false);
-    }
-  };
+  const filteredResources = useMemo(() => {
+    return resources.filter((res) => {
+      if (categoryFilter !== 'all' && res.category !== categoryFilter) return false;
+      if (search.trim()) {
+        const s = search.toLowerCase();
+        return (
+          res.title.toLowerCase().includes(s) ||
+          res.category.toLowerCase().includes(s) ||
+          (res.description || '').toLowerCase().includes(s)
+        );
+      }
+      return true;
+    });
+  }, [resources, categoryFilter, search]);
 
   const handleAddResource = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!profile || !resTitle.trim() || !resUrl.trim()) return;
     const missionId = profile.missionId || missions[0]?.id || 'sam_sabah';
+    setSubmitting(true);
     try {
       const ref = await addDoc(collection(db, 'resources'), {
         missionId,
@@ -78,6 +76,8 @@ export function ResourcesSettingsPage() {
       notify('Resource published.', 'success');
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, 'resources');
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -90,292 +90,207 @@ export function ResourcesSettingsPage() {
     }
   };
 
-  const handleSaveEmailDomains = async () => {
-    if (!profile) return;
-    const allowedDomains = domainsInput
-      .split(',')
-      .map((s) => s.trim().toLowerCase())
-      .filter(Boolean)
-      .slice(0, 50);
-    try {
-      await setDoc(
-        doc(db, 'settings', 'emailDomains'),
-        {
-          key: 'emailDomains',
-          allowedDomains,
-          appVersion: '3.2.0',
-          maintenanceMode: false,
-          updatedBy: profile.uid,
-          updatedAt: serverTimestamp(),
-        },
-        { merge: true },
-      );
-      notify('Allowed email domains configuration saved.', 'success');
-    } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, 'settings/emailDomains');
-    }
-  };
-
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-      {/* Left: Shared Mission Resources */}
-      <section className="lg:col-span-7 space-y-6">
+    <div className="space-y-6">
+      {/* Summary Strip */}
+      <div className="grid grid-cols-2 lg:grid-cols-3 border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] divide-y sm:divide-y-0 sm:divide-x divide-[var(--border-hairline)]">
+        <div className="px-5 py-4">
+          <div className="text-xs text-[var(--text-muted)]">Published Documents</div>
+          <div className="text-xl font-mono-tabular font-semibold mt-1">
+            {resources.length}
+          </div>
+        </div>
+        <div className="px-5 py-4">
+          <div className="text-xs text-[var(--text-muted)]">Resource Categories</div>
+          <div className="text-xl font-mono-tabular font-semibold mt-1">
+            {categories.length}
+          </div>
+        </div>
+        <div className="px-5 py-4 col-span-2 lg:col-span-1">
+          <div className="text-xs text-[var(--text-muted)]">Matching Library Items</div>
+          <div className="text-xl font-mono-tabular font-semibold mt-1">
+            {filteredResources.length}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+        {/* Left: Resource Library Browser */}
+        <section className={`${capabilities.canManageResources ? 'lg:col-span-7 xl:col-span-8' : 'lg:col-span-12'} space-y-4`}>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="relative flex-1 max-w-sm">
+              <Search className="w-4 h-4 text-[var(--text-muted)] absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search manuals, forms, or guidelines..."
+                className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)]"
+              />
+            </div>
+            <select
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value)}
+              className="px-3 py-2 text-sm rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)]"
+            >
+              <option value="all">All Categories ({resources.length})</option>
+              {categories.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] overflow-hidden">
+            <div className="px-5 py-4 border-b border-[var(--border-hairline)] flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <FolderOpen className="w-4 h-4 text-[var(--accent-primary)]" />
+                <h2 className="text-sm font-semibold">Mission Resource Library</h2>
+              </div>
+              <span className="text-xs font-mono-tabular text-[var(--text-muted)]">
+                {filteredResources.length} items
+              </span>
+            </div>
+            {filteredResources.length === 0 ? (
+              <div className="p-10 text-center space-y-2">
+                <FileText className="w-6 h-6 text-[var(--text-muted)] mx-auto" />
+                <div className="text-sm font-medium">No resources found</div>
+                <div className="text-xs text-[var(--text-muted)]">
+                  {resources.length === 0
+                    ? 'No shared mission manuals or templates have been published yet.'
+                    : 'Adjust your category filter or search query.'}
+                </div>
+              </div>
+            ) : (
+              <div className="divide-y divide-[var(--border-hairline)]">
+                {filteredResources.map((res) => (
+                  <div
+                    key={res.id}
+                    className="px-5 py-4 flex items-start justify-between gap-4 hover:bg-[var(--bg-subtle)]/40 transition-colors"
+                  >
+                    <div className="min-w-0 space-y-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-medium">{res.title}</span>
+                        <span className="text-[11px] font-medium px-2 py-0.5 rounded border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-[var(--text-secondary)]">
+                          {res.category}
+                        </span>
+                      </div>
+                      {res.description && (
+                        <div className="text-xs text-[var(--text-muted)] leading-relaxed">
+                          {res.description}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <a
+                        href={res.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-lg border border-[var(--border-hairline)] hover:bg-[var(--bg-subtle)] whitespace-nowrap shrink-0"
+                      >
+                        <span>Open</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                      {capabilities.canManageHierarchy && (
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteResource(res.id)}
+                          className="p-1.5 rounded-lg text-red-600 dark:text-red-400 hover:bg-[var(--bg-subtle)]"
+                          aria-label="Delete resource"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+
+        {/* Right: Publish Form (Editors / Admins) */}
         {capabilities.canManageResources && (
-          <div className="border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] p-5 space-y-4">
-            <h2 className="text-base font-display font-semibold">
-              Publish Shared Mission Resource
-            </h2>
+          <section className="lg:col-span-5 xl:col-span-4 border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] p-5 space-y-4">
+            <div>
+              <h2 className="text-base font-display font-semibold">
+                Publish Shared Resource
+              </h2>
+              <p className="text-xs text-[var(--text-muted)] mt-0.5">
+                Share manuals, Borang B templates, policies, and sermon guides with field pastors.
+              </p>
+            </div>
             <form onSubmit={handleAddResource} className="space-y-3">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-[var(--text-secondary)] mb-1">
+                  Resource Title *
+                </label>
                 <input
                   type="text"
                   required
-                  placeholder="Resource title *"
+                  placeholder="e.g. Minister's Handbook 2026"
                   maxLength={160}
                   value={resTitle}
                   onChange={(e) => setResTitle(e.target.value)}
-                  className="px-3 py-2 text-sm rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)]"
+                  className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)]"
                 />
+              </div>
+              <div>
+                <label className="block text-xs text-[var(--text-secondary)] mb-1">
+                  Category *
+                </label>
                 <input
                   type="text"
                   required
-                  placeholder="Category"
+                  placeholder="Ministerial Manual"
                   maxLength={64}
                   value={resCategory}
                   onChange={(e) => setResCategory(e.target.value)}
-                  className="px-3 py-2 text-sm rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)]"
+                  className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)]"
                 />
               </div>
-              <input
-                type="url"
-                required
-                placeholder="Document or external URL (https://...) *"
-                maxLength={500}
-                value={resUrl}
-                onChange={(e) => setResUrl(e.target.value)}
-                className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)]"
-              />
-              <input
-                type="text"
-                placeholder="Brief summary (optional)"
-                maxLength={1000}
-                value={resDesc}
-                onChange={(e) => setResDesc(e.target.value)}
-                className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)]"
-              />
-              <div className="flex justify-end">
+              <div>
+                <label className="block text-xs text-[var(--text-secondary)] mb-1">
+                  Document or External URL *
+                </label>
+                <input
+                  type="url"
+                  required
+                  placeholder="https://..."
+                  maxLength={500}
+                  value={resUrl}
+                  onChange={(e) => setResUrl(e.target.value)}
+                  className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)]"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-[var(--text-secondary)] mb-1">
+                  Summary (Optional)
+                </label>
+                <textarea
+                  rows={3}
+                  placeholder="Brief note explaining when pastors should use this resource..."
+                  maxLength={1000}
+                  value={resDesc}
+                  onChange={(e) => setResDesc(e.target.value)}
+                  className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)]"
+                />
+              </div>
+              <div className="flex justify-end pt-1">
                 <button
                   type="submit"
-                  className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium rounded-lg bg-[var(--accent-primary)] text-white"
+                  disabled={submitting}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium rounded-lg bg-[var(--accent-primary)] text-white whitespace-nowrap shrink-0 disabled:opacity-60"
                 >
                   <Plus className="w-3.5 h-3.5" />
-                  <span>Publish Resource</span>
+                  <span>{submitting ? 'Publishing...' : 'Publish Resource'}</span>
                 </button>
               </div>
             </form>
-          </div>
+          </section>
         )}
-
-        <div className="border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] overflow-hidden">
-          <div className="px-5 py-4 border-b border-[var(--border-hairline)]">
-            <h3 className="text-sm font-semibold">Mission Resource Library</h3>
-          </div>
-          {resources.length === 0 ? (
-            <div className="p-8 text-center space-y-2">
-              <FileText className="w-6 h-6 text-[var(--text-muted)] mx-auto" />
-              <div className="text-xs text-[var(--text-muted)]">
-                No shared documents uploaded yet.
-              </div>
-            </div>
-          ) : (
-            <div className="divide-y divide-[var(--border-hairline)]">
-              {resources.map((res) => (
-                <div
-                  key={res.id}
-                  className="px-5 py-4 flex items-start justify-between gap-4"
-                >
-                  <div className="min-w-0">
-                    <div className="text-sm font-medium">{res.title}</div>
-                    <div className="text-xs text-[var(--text-muted)] mt-0.5">
-                      {res.category} {res.description ? `· ${res.description}` : ''}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <a
-                      href={res.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-lg border border-[var(--border-hairline)] hover:bg-[var(--bg-subtle)]"
-                    >
-                      <span>Open</span>
-                      <ExternalLink className="w-3 h-3" />
-                    </a>
-                    {capabilities.canManageHierarchy && (
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteResource(res.id)}
-                        className="p-1.5 text-red-600 dark:text-red-400"
-                        aria-label="Delete resource"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </section>
-
-      {/* Right: Profile, Appearance & App Settings */}
-      <section className="lg:col-span-5 space-y-6">
-        <div className="border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] p-5 space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-base font-display font-semibold">Profile & Account</h2>
-            <span className="text-xs text-[var(--text-muted)]">
-              {profile ? ROLE_META[profile.userRole].label : ''}
-            </span>
-          </div>
-          <form onSubmit={handleSaveProfile} className="space-y-3">
-            <div>
-              <label className="block text-xs text-[var(--text-secondary)] mb-1">
-                Display Name
-              </label>
-              <input
-                type="text"
-                required
-                maxLength={120}
-                value={displayName}
-                onChange={(e) => setDisplayName(e.target.value)}
-                className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)]"
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-[var(--text-secondary)] mb-1">
-                Phone Number
-              </label>
-              <input
-                type="tel"
-                maxLength={40}
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)]"
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-[var(--text-secondary)] mb-1">
-                Profile Photo URL
-              </label>
-              <input
-                type="url"
-                maxLength={500}
-                value={photoURL}
-                onChange={(e) => setPhotoURL(e.target.value)}
-                className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)]"
-              />
-            </div>
-            <div className="flex justify-end pt-1">
-              <button
-                type="submit"
-                disabled={savingProfile}
-                className="px-4 py-2 text-xs font-medium rounded-lg bg-[var(--accent-primary)] text-white"
-              >
-                {savingProfile ? 'Saving...' : 'Save Profile'}
-              </button>
-            </div>
-          </form>
-        </div>
-
-        <div className="border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] p-5 space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold">Workspace Appearance</h3>
-            <button
-              type="button"
-              onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md border border-[var(--border-hairline)] hover:bg-[var(--bg-subtle)]"
-            >
-              {theme === 'light' ? (
-                <>
-                  <Moon className="w-3.5 h-3.5" />
-                  <span>Switch to Dark</span>
-                </>
-              ) : (
-                <>
-                  <Sun className="w-3.5 h-3.5" />
-                  <span>Switch to Light</span>
-                </>
-              )}
-            </button>
-          </div>
-
-          <div className="space-y-2">
-            <div className="text-xs text-[var(--text-muted)]">Non-Dark Editorial Themes</div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              {LIGHT_THEME_PRESETS.map((preset) => {
-                const active = theme === 'light' && lightTheme === preset.id;
-                return (
-                  <button
-                    key={preset.id}
-                    type="button"
-                    onClick={() => setLightTheme(preset.id)}
-                    className={`flex items-center gap-2.5 px-3 py-2 text-xs font-medium rounded-lg border text-left transition-colors ${
-                      active
-                        ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
-                        : 'border-[var(--border-hairline)] hover:bg-[var(--bg-subtle)]'
-                    }`}
-                  >
-                    <span className="w-5 h-5 rounded-sm border border-black/15 overflow-hidden flex shrink-0">
-                      <span className="w-1/2 h-full" style={{ backgroundColor: preset.sidebar }} />
-                      <span className="w-1/2 h-full" style={{ backgroundColor: preset.accent }} />
-                    </span>
-                    <span className="truncate">{preset.label}</span>
-                  </button>
-                );
-              })}
-              <button
-                type="button"
-                onClick={() => setTheme('dark')}
-                className={`flex items-center gap-2.5 px-3 py-2 text-xs font-medium rounded-lg border text-left transition-colors ${
-                  theme === 'dark'
-                    ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
-                    : 'border-[var(--border-hairline)] hover:bg-[var(--bg-subtle)]'
-                }`}
-              >
-                <Moon className="w-4 h-4 shrink-0" />
-                <span className="truncate">Dark Console</span>
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {capabilities.canManageMissions && (
-          <div className="border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] p-5 space-y-3">
-            <h3 className="text-sm font-semibold">Allowed Email Domains (Admin)</h3>
-            <input
-              type="text"
-              value={domainsInput}
-              onChange={(e) => setDomainsInput(e.target.value)}
-              className="w-full px-3 py-2 text-xs rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)] font-mono-tabular"
-            />
-            <button
-              type="button"
-              onClick={handleSaveEmailDomains}
-              className="px-3.5 py-1.5 text-xs font-medium rounded-lg border border-[var(--border-hairline)] hover:bg-[var(--bg-subtle)]"
-            >
-              Save Settings
-            </button>
-          </div>
-        )}
-
-        <div className="border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] p-5 text-xs text-[var(--text-secondary)] space-y-1">
-          <div className="font-semibold text-[var(--text-primary)]">
-            Pastor Report — Sabah Adventist Mission
-          </div>
-          <div>Version 3.2.0 · Native React Editorial Workspace</div>
-          <div>Offline-enabled Cloud Firestore synchronization</div>
-        </div>
-      </section>
+      </div>
     </div>
   );
 }

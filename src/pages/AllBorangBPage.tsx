@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { collection, onSnapshot, orderBy, query } from 'firebase/firestore';
-import { Download, Eye, Printer, Search, X } from 'lucide-react';
+import { CheckCircle2, Clock, Download, Eye, FileJson, Printer, Search, X } from 'lucide-react';
 import { useMission } from '../contexts/MissionContext';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import {
   exportToCsv,
   exportToExcel,
+  exportToJson,
   MONTHS,
   triggerPrintPdf,
 } from '../lib/exportUtils';
@@ -13,17 +14,27 @@ import { useToast } from '../components/Toast';
 import type { BorangBReport } from '../types';
 
 export function AllBorangBPage() {
-  const { districts } = useMission();
+  const { districts, regions, staff } = useMission();
   const { notify } = useToast();
 
+  const now = new Date();
+  const [viewMode, setViewMode] = useState<'reports' | 'tracker'>('reports');
   const [reports, setReports] = useState<BorangBReport[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Reports browser filters
   const [search, setSearch] = useState('');
   const [districtFilter, setDistrictFilter] = useState('all');
   const [yearFilter, setYearFilter] = useState<string>('all');
   const [monthFilter, setMonthFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [selected, setSelected] = useState<BorangBReport | null>(null);
+
+  // Submission Tracker period & filters
+  const [trackerMonth, setTrackerMonth] = useState<number>(now.getMonth() + 1);
+  const [trackerYear, setTrackerYear] = useState<number>(now.getFullYear());
+  const [trackerRegionId, setTrackerRegionId] = useState<string>('all');
+  const [trackerStatusFilter, setTrackerStatusFilter] = useState<'all' | 'submitted' | 'draft' | 'missing'>('all');
 
   useEffect(() => {
     setLoading(true);
@@ -67,12 +78,92 @@ export function AllBorangBPage() {
     });
   }, [reports, districtFilter, yearFilter, monthFilter, statusFilter, search]);
 
-  const yearsAvailable = useMemo(
-    () => Array.from(new Set(reports.map((r) => r.year))).sort((a, b) => b - a),
-    [reports],
-  );
+  const yearsAvailable = useMemo(() => {
+    const set = new Set<number>([now.getFullYear()]);
+    reports.forEach((r) => set.add(r.year));
+    return Array.from(set).sort((a, b) => b - a);
+  }, [reports, now]);
 
-  const handleExport = (fmt: 'csv' | 'xlsx') => {
+  // District Submission Tracker rows for selected month/year
+  const trackerRows = useMemo(() => {
+    const periodReports = reports.filter(
+      (r) => r.year === trackerYear && r.month === trackerMonth,
+    );
+    const reportByDistrict = new Map<string, BorangBReport>();
+    periodReports.forEach((r) => {
+      const existing = reportByDistrict.get(r.districtId);
+      if (!existing || (existing.status !== 'submitted' && r.status === 'submitted')) {
+        reportByDistrict.set(r.districtId, r);
+      }
+    });
+
+    return districts
+      .filter((d) => trackerRegionId === 'all' || d.regionId === trackerRegionId)
+      .map((d) => {
+        const region = regions.find((reg) => reg.id === d.regionId);
+        const assignedStaff = staff.find((s) => s.districtId === d.id);
+        const report = reportByDistrict.get(d.id) || null;
+        const compliance: 'submitted' | 'draft' | 'missing' = report
+          ? report.status === 'submitted'
+            ? 'submitted'
+            : 'draft'
+          : 'missing';
+        return {
+          district: d,
+          regionName: region?.name || '—',
+          pastorName:
+            report?.pastorName || d.districtPastorName || assignedStaff?.fullName || 'Unassigned',
+          report,
+          compliance,
+        };
+      })
+      .filter((row) =>
+        trackerStatusFilter === 'all' ? true : row.compliance === trackerStatusFilter,
+      );
+  }, [districts, regions, staff, reports, trackerMonth, trackerYear, trackerRegionId, trackerStatusFilter]);
+
+  const trackerSummary = useMemo(() => {
+    const allForRegion = districts.filter(
+      (d) => trackerRegionId === 'all' || d.regionId === trackerRegionId,
+    );
+    const periodReports = reports.filter(
+      (r) => r.year === trackerYear && r.month === trackerMonth,
+    );
+    const submittedIds = new Set(
+      periodReports.filter((r) => r.status === 'submitted').map((r) => r.districtId),
+    );
+    const draftIds = new Set(
+      periodReports
+        .filter((r) => r.status !== 'submitted' && !submittedIds.has(r.districtId))
+        .map((r) => r.districtId),
+    );
+    const total = allForRegion.length;
+    const submitted = allForRegion.filter((d) => submittedIds.has(d.id)).length;
+    const draft = allForRegion.filter((d) => draftIds.has(d.id)).length;
+    const missing = Math.max(0, total - submitted - draft);
+    const rate = total > 0 ? Math.round((submitted / total) * 100) : 0;
+    return { total, submitted, draft, missing, rate };
+  }, [districts, reports, trackerMonth, trackerYear, trackerRegionId]);
+
+  const handleExport = (fmt: 'csv' | 'xlsx' | 'json') => {
+    if (viewMode === 'tracker') {
+      const rows = trackerRows.map((row) => ({
+        District: row.district.name,
+        Region: row.regionName,
+        AssignedPastor: row.pastorName,
+        Period: `${MONTHS[trackerMonth - 1]} ${trackerYear}`,
+        Status: row.compliance,
+        Sermons: row.report?.sermonsPreached ?? 0,
+        Baptisms: row.report?.baptisms ?? 0,
+      }));
+      const base = `borang_b_tracker_${trackerYear}_${String(trackerMonth).padStart(2, '0')}`;
+      if (fmt === 'csv') exportToCsv(base, rows);
+      else if (fmt === 'xlsx') exportToExcel(base, [{ name: 'Submission Tracker', rows }]);
+      else exportToJson(base, rows);
+      notify(`Exported ${rows.length} submission tracker rows.`, 'success');
+      return;
+    }
+
     const rows = filtered.map((r) => ({
       Pastor: r.pastorName,
       District: r.districtName || r.districtId,
@@ -88,7 +179,8 @@ export function AllBorangBPage() {
       ProfessionsOfFaith: r.professionsOfFaith,
     }));
     if (fmt === 'csv') exportToCsv('mission_borang_b_reports', rows);
-    else exportToExcel('mission_borang_b_reports', [{ name: 'Borang B', rows }]);
+    else if (fmt === 'xlsx') exportToExcel('mission_borang_b_reports', [{ name: 'Borang B', rows }]);
+    else exportToJson('mission_borang_b_reports', filtered);
     notify(`Exported ${rows.length} Borang B reports.`, 'success');
   };
 
@@ -104,71 +196,36 @@ export function AllBorangBPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 no-print">
-        <div className="flex flex-wrap items-center gap-2.5">
-          <div className="relative">
-            <Search className="w-4 h-4 text-[var(--text-muted)] absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search pastor or district..."
-              className="pl-9 pr-3 py-2 text-sm rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)] w-56"
-            />
-          </div>
-          <select
-            value={districtFilter}
-            onChange={(e) => setDistrictFilter(e.target.value)}
-            className="px-3 py-2 text-sm rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)]"
-          >
-            <option value="all">All Districts</option>
-            {districts.map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.name}
-              </option>
-            ))}
-          </select>
-          <select
-            value={monthFilter}
-            onChange={(e) => setMonthFilter(e.target.value)}
-            className="px-3 py-2 text-sm rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)]"
-          >
-            <option value="all">All Months</option>
-            {MONTHS.map((m, idx) => (
-              <option key={m} value={String(idx + 1)}>
-                {m}
-              </option>
-            ))}
-          </select>
-          <select
-            value={yearFilter}
-            onChange={(e) => setYearFilter(e.target.value)}
-            className="px-3 py-2 text-sm rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)] font-mono-tabular"
-          >
-            <option value="all">All Years</option>
-            {yearsAvailable.map((y) => (
-              <option key={y} value={String(y)}>
-                {y}
-              </option>
-            ))}
-          </select>
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="px-3 py-2 text-sm rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)]"
-          >
-            <option value="all">All Statuses</option>
-            <option value="submitted">Submitted</option>
-            <option value="draft">Draft</option>
-          </select>
+      {/* Top Mode Switcher + Export Controls */}
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 no-print">
+        <div className="inline-flex p-1 rounded-lg bg-[var(--bg-subtle)] border border-[var(--border-hairline)] self-start">
+          {(
+            [
+              ['reports', `Submitted Reports (${reports.length})`],
+              ['tracker', 'Submission Tracker'],
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setViewMode(id)}
+              className={`px-3.5 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 ${
+                viewMode === id
+                  ? 'bg-[var(--bg-surface)] text-[var(--text-primary)] shadow-xs'
+                  : 'text-[var(--text-secondary)]'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={() => handleExport('csv')}
-            disabled={filtered.length === 0}
-            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)] disabled:opacity-50"
+            disabled={viewMode === 'reports' ? filtered.length === 0 : trackerRows.length === 0}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)] disabled:opacity-50 whitespace-nowrap shrink-0"
           >
             <Download className="w-3.5 h-3.5" />
             <span>CSV</span>
@@ -176,16 +233,25 @@ export function AllBorangBPage() {
           <button
             type="button"
             onClick={() => handleExport('xlsx')}
-            disabled={filtered.length === 0}
-            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)] disabled:opacity-50"
+            disabled={viewMode === 'reports' ? filtered.length === 0 : trackerRows.length === 0}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)] disabled:opacity-50 whitespace-nowrap shrink-0"
           >
             <Download className="w-3.5 h-3.5" />
             <span>Excel</span>
           </button>
           <button
             type="button"
+            onClick={() => handleExport('json')}
+            disabled={viewMode === 'reports' ? filtered.length === 0 : trackerRows.length === 0}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)] disabled:opacity-50 whitespace-nowrap shrink-0"
+          >
+            <FileJson className="w-3.5 h-3.5" />
+            <span>JSON</span>
+          </button>
+          <button
+            type="button"
             onClick={triggerPrintPdf}
-            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)]"
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)] whitespace-nowrap shrink-0"
           >
             <Printer className="w-3.5 h-3.5" />
             <span>Print</span>
@@ -193,111 +259,336 @@ export function AllBorangBPage() {
         </div>
       </div>
 
-      {/* Aggregate Totals */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] divide-y sm:divide-y-0 sm:divide-x divide-[var(--border-hairline)]">
-        <div className="px-5 py-3.5">
-          <div className="text-xs text-[var(--text-muted)]">Total Sermons</div>
-          <div className="text-lg font-mono-tabular font-semibold mt-0.5">
-            {totals.sermons.toLocaleString()}
+      {viewMode === 'reports' ? (
+        <>
+          <div className="flex flex-wrap items-center gap-2.5 no-print">
+            <div className="relative">
+              <Search className="w-4 h-4 text-[var(--text-muted)] absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search pastor or district..."
+                className="pl-9 pr-3 py-2 text-sm rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)] w-56"
+              />
+            </div>
+            <select
+              value={districtFilter}
+              onChange={(e) => setDistrictFilter(e.target.value)}
+              className="px-3 py-2 text-sm rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)]"
+            >
+              <option value="all">All Districts</option>
+              {districts.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+            </select>
+            <select
+              value={monthFilter}
+              onChange={(e) => setMonthFilter(e.target.value)}
+              className="px-3 py-2 text-sm rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)]"
+            >
+              <option value="all">All Months</option>
+              {MONTHS.map((m, idx) => (
+                <option key={m} value={String(idx + 1)}>
+                  {m}
+                </option>
+              ))}
+            </select>
+            <select
+              value={yearFilter}
+              onChange={(e) => setYearFilter(e.target.value)}
+              className="px-3 py-2 text-sm rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)] font-mono-tabular"
+            >
+              <option value="all">All Years</option>
+              {yearsAvailable.map((y) => (
+                <option key={y} value={String(y)}>
+                  {y}
+                </option>
+              ))}
+            </select>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="px-3 py-2 text-sm rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)]"
+            >
+              <option value="all">All Statuses</option>
+              <option value="submitted">Submitted</option>
+              <option value="draft">Draft</option>
+            </select>
           </div>
-        </div>
-        <div className="px-5 py-3.5">
-          <div className="text-xs text-[var(--text-muted)]">Total Visitations</div>
-          <div className="text-lg font-mono-tabular font-semibold mt-0.5">
-            {totals.visits.toLocaleString()}
-          </div>
-        </div>
-        <div className="px-5 py-3.5">
-          <div className="text-xs text-[var(--text-muted)]">Total Bible Studies</div>
-          <div className="text-lg font-mono-tabular font-semibold mt-0.5">
-            {totals.studies.toLocaleString()}
-          </div>
-        </div>
-        <div className="px-5 py-3.5">
-          <div className="text-xs text-[var(--text-muted)]">Total Baptisms</div>
-          <div className="text-lg font-mono-tabular font-semibold mt-0.5">
-            {totals.baptisms.toLocaleString()}
-          </div>
-        </div>
-      </div>
 
-      <div className="border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] overflow-hidden print-sheet">
-        {loading ? (
-          <div className="p-6 space-y-3">
-            {[1, 2, 3, 4].map((i) => (
-              <div key={i} className="h-10 rounded bg-[var(--bg-subtle)] animate-pulse" />
-            ))}
+          {/* Aggregate Totals */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] divide-y sm:divide-y-0 sm:divide-x divide-[var(--border-hairline)]">
+            <div className="px-5 py-3.5">
+              <div className="text-xs text-[var(--text-muted)]">Total Sermons</div>
+              <div className="text-lg font-mono-tabular font-semibold mt-0.5">
+                {totals.sermons.toLocaleString()}
+              </div>
+            </div>
+            <div className="px-5 py-3.5">
+              <div className="text-xs text-[var(--text-muted)]">Total Visitations</div>
+              <div className="text-lg font-mono-tabular font-semibold mt-0.5">
+                {totals.visits.toLocaleString()}
+              </div>
+            </div>
+            <div className="px-5 py-3.5">
+              <div className="text-xs text-[var(--text-muted)]">Total Bible Studies</div>
+              <div className="text-lg font-mono-tabular font-semibold mt-0.5">
+                {totals.studies.toLocaleString()}
+              </div>
+            </div>
+            <div className="px-5 py-3.5">
+              <div className="text-xs text-[var(--text-muted)]">Total Baptisms</div>
+              <div className="text-lg font-mono-tabular font-semibold mt-0.5">
+                {totals.baptisms.toLocaleString()}
+              </div>
+            </div>
           </div>
-        ) : filtered.length === 0 ? (
-          <div className="p-10 text-center text-sm text-[var(--text-muted)]">
-            No mission Borang B submissions match the active filters.
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-sm">
-              <thead>
-                <tr className="border-b border-[var(--border-hairline)] text-xs text-[var(--text-muted)]">
-                  <th className="py-3 px-4 font-medium">Pastor</th>
-                  <th className="py-3 px-4 font-medium">District</th>
-                  <th className="py-3 px-4 font-medium">Period</th>
-                  <th className="py-3 px-4 font-medium">Status</th>
-                  <th className="py-3 px-4 font-medium text-right">Sermons</th>
-                  <th className="py-3 px-4 font-medium text-right">Visits</th>
-                  <th className="py-3 px-4 font-medium text-right">Studies</th>
-                  <th className="py-3 px-4 font-medium text-right">Baptisms</th>
-                  <th className="py-3 px-4 font-medium text-right no-print">Inspect</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--border-hairline)]">
-                {filtered.map((r) => (
-                  <tr key={r.id} className="hover:bg-[var(--bg-subtle)]/60">
-                    <td className="py-3 px-4 font-medium">{r.pastorName}</td>
-                    <td className="py-3 px-4 text-xs text-[var(--text-secondary)]">
-                      {r.districtName || r.districtId}
-                    </td>
-                    <td className="py-3 px-4 text-xs font-mono-tabular whitespace-nowrap">
-                      {MONTHS[(r.month || 1) - 1]} {r.year}
-                    </td>
-                    <td className="py-3 px-4 text-xs capitalize">
-                      <span
-                        className={
-                          r.status === 'submitted'
-                            ? 'text-emerald-700 dark:text-emerald-400 font-medium'
-                            : 'text-amber-700 dark:text-amber-400'
-                        }
-                      >
-                        {r.status}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4 text-right font-mono-tabular">
-                      {r.sermonsPreached}
-                    </td>
-                    <td className="py-3 px-4 text-right font-mono-tabular">
-                      {(r.homeVisitations || 0) + (r.hospitalVisitations || 0)}
-                    </td>
-                    <td className="py-3 px-4 text-right font-mono-tabular">
-                      {r.bibleStudiesGiven}
-                    </td>
-                    <td className="py-3 px-4 text-right font-mono-tabular">
-                      {r.baptisms}
-                    </td>
-                    <td className="py-3 px-4 text-right no-print">
-                      <button
-                        type="button"
-                        onClick={() => setSelected(r)}
-                        className="inline-flex items-center gap-1 text-xs font-medium text-[var(--accent-primary)] hover:underline"
-                      >
-                        <Eye className="w-3.5 h-3.5" />
-                        <span>View</span>
-                      </button>
-                    </td>
-                  </tr>
+
+          <div className="border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] overflow-hidden print-sheet">
+            {loading ? (
+              <div className="p-6 space-y-3">
+                {[1, 2, 3, 4].map((i) => (
+                  <div key={i} className="h-10 rounded bg-[var(--bg-subtle)] animate-pulse" />
                 ))}
-              </tbody>
-            </table>
+              </div>
+            ) : filtered.length === 0 ? (
+              <div className="p-10 text-center text-sm text-[var(--text-muted)]">
+                No mission Borang B submissions match the active filters.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-sm">
+                  <thead>
+                    <tr className="border-b border-[var(--border-hairline)] text-xs text-[var(--text-muted)]">
+                      <th className="py-3 px-4 font-medium">Pastor</th>
+                      <th className="py-3 px-4 font-medium">District</th>
+                      <th className="py-3 px-4 font-medium">Period</th>
+                      <th className="py-3 px-4 font-medium">Status</th>
+                      <th className="py-3 px-4 font-medium text-right">Sermons</th>
+                      <th className="py-3 px-4 font-medium text-right">Visits</th>
+                      <th className="py-3 px-4 font-medium text-right">Studies</th>
+                      <th className="py-3 px-4 font-medium text-right">Baptisms</th>
+                      <th className="py-3 px-4 font-medium text-right no-print">Inspect</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--border-hairline)]">
+                    {filtered.map((r) => (
+                      <tr key={r.id} className="hover:bg-[var(--bg-subtle)]/60">
+                        <td className="py-3 px-4 font-medium">{r.pastorName}</td>
+                        <td className="py-3 px-4 text-xs text-[var(--text-secondary)]">
+                          {r.districtName || r.districtId}
+                        </td>
+                        <td className="py-3 px-4 text-xs font-mono-tabular whitespace-nowrap">
+                          {MONTHS[(r.month || 1) - 1]} {r.year}
+                        </td>
+                        <td className="py-3 px-4 text-xs capitalize">
+                          <span
+                            className={
+                              r.status === 'submitted'
+                                ? 'text-emerald-700 dark:text-emerald-400 font-medium'
+                                : 'text-amber-700 dark:text-amber-400'
+                            }
+                          >
+                            {r.status}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-right font-mono-tabular">
+                          {r.sermonsPreached}
+                        </td>
+                        <td className="py-3 px-4 text-right font-mono-tabular">
+                          {(r.homeVisitations || 0) + (r.hospitalVisitations || 0)}
+                        </td>
+                        <td className="py-3 px-4 text-right font-mono-tabular">
+                          {r.bibleStudiesGiven}
+                        </td>
+                        <td className="py-3 px-4 text-right font-mono-tabular">
+                          {r.baptisms}
+                        </td>
+                        <td className="py-3 px-4 text-right no-print">
+                          <button
+                            type="button"
+                            onClick={() => setSelected(r)}
+                            className="inline-flex items-center gap-1 text-xs font-medium text-[var(--accent-primary)] hover:underline"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            <span>View</span>
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        </>
+      ) : (
+        /* MINISTERIAL SECRETARY SUBMISSION TRACKER */
+        <div className="space-y-5">
+          <div className="flex flex-wrap items-center gap-2.5 no-print">
+            <select
+              value={trackerMonth}
+              onChange={(e) => setTrackerMonth(Number(e.target.value))}
+              className="px-3 py-2 text-sm rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)]"
+            >
+              {MONTHS.map((m, idx) => (
+                <option key={m} value={idx + 1}>
+                  {m}
+                </option>
+              ))}
+            </select>
+            <select
+              value={trackerYear}
+              onChange={(e) => setTrackerYear(Number(e.target.value))}
+              className="px-3 py-2 text-sm rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)] font-mono-tabular"
+            >
+              {yearsAvailable.map((y) => (
+                <option key={y} value={y}>
+                  {y}
+                </option>
+              ))}
+            </select>
+            <select
+              value={trackerRegionId}
+              onChange={(e) => setTrackerRegionId(e.target.value)}
+              className="px-3 py-2 text-sm rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)]"
+            >
+              <option value="all">All Regions ({regions.length})</option>
+              {regions.map((reg) => (
+                <option key={reg.id} value={reg.id}>
+                  {reg.name}
+                </option>
+              ))}
+            </select>
+            <select
+              value={trackerStatusFilter}
+              onChange={(e) =>
+                setTrackerStatusFilter(
+                  e.target.value as 'all' | 'submitted' | 'draft' | 'missing',
+                )
+              }
+              className="px-3 py-2 text-sm rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)]"
+            >
+              <option value="all">All Districts</option>
+              <option value="submitted">Submitted Only</option>
+              <option value="draft">Draft Only</option>
+              <option value="missing">Not Yet Submitted</option>
+            </select>
+          </div>
+
+          <div className="grid grid-cols-2 lg:grid-cols-4 border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] divide-y sm:divide-y-0 sm:divide-x divide-[var(--border-hairline)]">
+            <div className="px-5 py-3.5">
+              <div className="text-xs text-[var(--text-muted)]">Submission Rate</div>
+              <div className="text-lg font-mono-tabular font-semibold mt-0.5 text-[var(--accent-primary)]">
+                {trackerSummary.rate}%
+              </div>
+            </div>
+            <div className="px-5 py-3.5">
+              <div className="text-xs text-[var(--text-muted)]">Submitted Districts</div>
+              <div className="text-lg font-mono-tabular font-semibold mt-0.5 text-emerald-700 dark:text-emerald-400">
+                {trackerSummary.submitted} / {trackerSummary.total}
+              </div>
+            </div>
+            <div className="px-5 py-3.5">
+              <div className="text-xs text-[var(--text-muted)]">Draft In Progress</div>
+              <div className="text-lg font-mono-tabular font-semibold mt-0.5 text-amber-700 dark:text-amber-400">
+                {trackerSummary.draft}
+              </div>
+            </div>
+            <div className="px-5 py-3.5">
+              <div className="text-xs text-[var(--text-muted)]">Awaiting Submission</div>
+              <div className="text-lg font-mono-tabular font-semibold mt-0.5 text-red-600 dark:text-red-400">
+                {trackerSummary.missing}
+              </div>
+            </div>
+          </div>
+
+          <div className="border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] overflow-hidden print-sheet">
+            <div className="px-5 py-3.5 border-b border-[var(--border-hairline)] flex items-center justify-between">
+              <div className="text-sm font-semibold">
+                District Compliance — {MONTHS[trackerMonth - 1]} {trackerYear}
+              </div>
+              <div className="text-xs text-[var(--text-muted)] font-mono-tabular">
+                {trackerRows.length} districts shown
+              </div>
+            </div>
+            {trackerRows.length === 0 ? (
+              <div className="p-10 text-center text-sm text-[var(--text-muted)]">
+                No districts match the selected compliance filter.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-sm">
+                  <thead>
+                    <tr className="border-b border-[var(--border-hairline)] text-xs text-[var(--text-muted)]">
+                      <th className="py-3 px-4 font-medium">District</th>
+                      <th className="py-3 px-4 font-medium">Region</th>
+                      <th className="py-3 px-4 font-medium">District Pastor</th>
+                      <th className="py-3 px-4 font-medium">Status</th>
+                      <th className="py-3 px-4 font-medium text-right">Sermons</th>
+                      <th className="py-3 px-4 font-medium text-right">Baptisms</th>
+                      <th className="py-3 px-4 font-medium text-right no-print">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--border-hairline)]">
+                    {trackerRows.map(({ district, regionName, pastorName, report, compliance }) => (
+                      <tr key={district.id} className="hover:bg-[var(--bg-subtle)]/50">
+                        <td className="py-3 px-4 font-medium">{district.name}</td>
+                        <td className="py-3 px-4 text-xs text-[var(--text-secondary)]">
+                          {regionName}
+                        </td>
+                        <td className="py-3 px-4 text-xs text-[var(--text-secondary)]">
+                          {pastorName}
+                        </td>
+                        <td className="py-3 px-4 text-xs">
+                          {compliance === 'submitted' ? (
+                            <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-400 font-medium">
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              <span>Submitted</span>
+                            </span>
+                          ) : compliance === 'draft' ? (
+                            <span className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-400 font-medium">
+                              <Clock className="w-3.5 h-3.5" />
+                              <span>Draft Saved</span>
+                            </span>
+                          ) : (
+                            <span className="text-red-600 dark:text-red-400 font-medium">
+                              Not Submitted
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 text-right font-mono-tabular">
+                          {report ? report.sermonsPreached : '—'}
+                        </td>
+                        <td className="py-3 px-4 text-right font-mono-tabular">
+                          {report ? report.baptisms : '—'}
+                        </td>
+                        <td className="py-3 px-4 text-right no-print">
+                          {report ? (
+                            <button
+                              type="button"
+                              onClick={() => setSelected(report)}
+                              className="inline-flex items-center gap-1 text-xs font-medium text-[var(--accent-primary)] hover:underline"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                              <span>Inspect</span>
+                            </button>
+                          ) : (
+                            <span className="text-xs text-[var(--text-muted)]">Pending</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Inspection Slide-over Drawer */}
       {selected && (

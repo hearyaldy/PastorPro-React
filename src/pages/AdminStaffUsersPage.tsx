@@ -332,6 +332,7 @@ export function AdminStaffUsersPage() {
                           onChange={(e) => {
                             const dist = districts.find((d) => d.id === e.target.value);
                             const reg = regions.find((r) => r.id === dist?.regionId);
+                            const mission = missions.find((m) => m.id === (dist?.missionId || u.missionId));
                             handleUpdateUser(
                               u,
                               {
@@ -340,6 +341,9 @@ export function AdminStaffUsersPage() {
                                 regionId: reg?.id || '',
                                 regionName: reg?.name || '',
                                 missionId: dist?.missionId || u.missionId || 'sam_sabah',
+                                missionName: mission?.name || u.missionName || '',
+                                unionId: mission?.unionId || u.unionId || '',
+                                unionName: mission?.unionName || u.unionName || '',
                               },
                               `Assigned ${u.displayName} to ${dist?.name || 'Unassigned'}`,
                             );
@@ -400,7 +404,11 @@ export function AdminStaffUsersPage() {
                               onClick={() =>
                                 handleUpdateUser(
                                   u,
-                                  { isActive: !u.isActive },
+                                  {
+                                    isActive: !u.isActive,
+                                    approvalStatus: !u.isActive ? 'approved' : 'rejected',
+                                    approvedBy: profile?.uid || '',
+                                  },
                                   `${u.isActive ? 'Deactivated' : 'Reactivated'} ${u.displayName}`,
                                 )
                               }

@@ -26,6 +26,7 @@ import {
   normalizeUserRole,
   ROLE_META,
   type RoleCapabilities,
+  type UserApprovalStatus,
   type UserProfile,
   type UserRole,
 } from '../types';
@@ -97,7 +98,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               isAdmin: isBootstrapAdmin,
               level: ROLE_META[initialRole].level,
               isPremium: false,
-              isActive: true,
+              isActive: isBootstrapAdmin,
+              approvalStatus: isBootstrapAdmin ? 'approved' : 'pending',
               onboardingCompleted: false,
               createdAt: serverTimestamp(),
               updatedAt: serverTimestamp(),
@@ -116,6 +118,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
           const raw = snap.data() as Record<string, unknown>;
           const resolvedRole = normalizeUserRole(raw);
+          const rawApproval = String(raw.approvalStatus || '');
+          const approvalStatus: UserApprovalStatus =
+            rawApproval === 'pending' ||
+            rawApproval === 'approved' ||
+            rawApproval === 'rejected'
+              ? rawApproval
+              : raw.isActive === false
+                ? 'rejected'
+                : 'approved';
+
           setProfile({
             uid: String(raw.uid || fbUser.uid),
             email: String(raw.email || fbUser.email || ''),
@@ -134,6 +146,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               typeof raw.level === 'number'
                 ? raw.level
                 : ROLE_META[resolvedRole].level,
+            unionId: raw.unionId ? String(raw.unionId) : '',
+            unionName: raw.unionName ? String(raw.unionName) : '',
             missionId: raw.missionId ? String(raw.missionId) : '',
             missionName: raw.missionName ? String(raw.missionName) : '',
             regionId: raw.regionId ? String(raw.regionId) : '',
@@ -143,7 +157,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             churchId: raw.churchId ? String(raw.churchId) : '',
             churchName: raw.churchName ? String(raw.churchName) : '',
             isPremium: Boolean(raw.isPremium),
-            isActive: raw.isActive !== false,
+            isActive: raw.isActive !== false && approvalStatus === 'approved',
+            approvalStatus,
+            approvedBy: raw.approvedBy ? String(raw.approvedBy) : '',
+            approvalNote: raw.approvalNote ? String(raw.approvalNote) : '',
             onboardingCompleted: Boolean(raw.onboardingCompleted),
             createdAt: raw.createdAt,
             updatedAt: raw.updatedAt,
@@ -186,6 +203,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       'displayName',
       'photoURL',
       'phone',
+      'unionId',
+      'unionName',
       'missionId',
       'missionName',
       'regionId',

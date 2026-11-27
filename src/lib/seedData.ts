@@ -6,21 +6,50 @@ export async function bootstrapSabahMissionBaseline(
   actorName: string,
 ): Promise<void> {
   const now = serverTimestamp();
+  const unionId = 'union_maum';
+  const unionName = 'Malaysia Union Mission';
   const missionId = 'sam_sabah';
 
   try {
+    // Tier 0: Union
+    const unionRef = doc(db, 'unions', unionId);
+    const unionSnap = await getDoc(unionRef);
+    if (!unionSnap.exists()) {
+      const uBatch = writeBatch(db);
+      uBatch.set(unionRef, {
+        name: unionName,
+        code: 'MAUM',
+        country: 'Malaysia',
+        headquarters: 'Petaling Jaya, Selangor',
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+      });
+      await uBatch.commit();
+    }
+
     // Tier 1: Mission
     const missionRef = doc(db, 'missions', missionId);
     const missionSnap = await getDoc(missionRef);
     if (!missionSnap.exists()) {
       const mBatch = writeBatch(db);
       mBatch.set(missionRef, {
+        unionId,
+        unionName,
         name: 'Sabah Adventist Mission',
         code: 'SAM',
         country: 'Malaysia',
         headquarters: 'Tamparuli, Sabah',
         isActive: true,
         createdAt: now,
+        updatedAt: now,
+      });
+      await mBatch.commit();
+    } else if (!missionSnap.data().unionId) {
+      const mBatch = writeBatch(db);
+      mBatch.update(missionRef, {
+        unionId,
+        unionName,
         updatedAt: now,
       });
       await mBatch.commit();
