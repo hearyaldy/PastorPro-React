@@ -1,3 +1,4 @@
+import { appPath } from '../lib/appPaths';
 import { useEffect, useState } from 'react';
 import { doc, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore';
 import { Check, Info, LogOut, Moon, ShieldCheck, Sun } from 'lucide-react';
@@ -350,8 +351,8 @@ export function SettingsPage({
             <div>Offline-capable Firebase Firestore & Google Sign-In</div>
           </div>
           <div className="pt-2">
-            <a href="/privacy-policy" className="text-xs font-medium text-[var(--accent-primary)] hover:underline">Read Privacy Policy</a>
-            <a href="/account-deletion" className="block mt-3 text-xs font-medium text-red-700 hover:underline">Delete my account</a>
+            <a href={appPath('privacy-policy')} className="text-xs font-medium text-[var(--accent-primary)] hover:underline">Read Privacy Policy</a>
+            <a href={appPath('account-deletion')} className="block mt-3 text-xs font-medium text-red-700 hover:underline">Delete my account</a>
           </div>
         </div>
       </section>

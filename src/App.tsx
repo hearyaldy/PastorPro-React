@@ -1,3 +1,4 @@
+import { appPath, currentAppPage } from './lib/appPaths';
 import { PrivacyPolicyPage } from './pages/PrivacyPolicyPage';
 import { AccountDeletionPage } from './pages/AccountDeletionPage';
 import type { MissionReportContext } from './components/MissionReportingDashboard';
@@ -106,7 +107,7 @@ function WorkspaceRouter() {
 
   const isSuperAdmin = profile.userRole === 'super_admin';
 
-  if (profile.deletionPending) return <div className="min-h-screen flex items-center justify-center p-6"><div className="max-w-md space-y-4"><h1 className="text-xl font-semibold">Account deletion is processing</h1><p>Your workspace access is closed while your deletion request is processed.</p><a href="/account-deletion" className="underline">Account deletion information</a><button className="block underline" onClick={signOut}>Sign out</button></div></div>;
+  if (profile.deletionPending) return <div className="min-h-screen flex items-center justify-center p-6"><div className="max-w-md space-y-4"><h1 className="text-xl font-semibold">Account deletion is processing</h1><p>Your workspace access is closed while your deletion request is processed.</p><a href={appPath('account-deletion')} className="underline">Account deletion information</a><button className="block underline" onClick={signOut}>Sign out</button></div></div>;
 
   if (profile.approvalStatus === 'pending') {
     return (
@@ -126,7 +127,7 @@ function WorkspaceRouter() {
           <div className="p-4 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-subtle)] text-xs text-[var(--text-secondary)]">
             Once an administrator approves your account in the Admin Console, this screen will unlock automatically.
           </div>
-          <a href="/account-deletion" className="text-xs underline">Privacy and account deletion</a>
+          <a href={appPath('account-deletion')} className="text-xs underline">Privacy and account deletion</a>
           <div className="flex justify-end">
             <button
               type="button"
@@ -161,7 +162,7 @@ function WorkspaceRouter() {
               Note: {profile.approvalNote}
             </div>
           )}
-          <a href="/account-deletion" className="block text-xs underline">Privacy and account deletion</a>
+          <a href={appPath('account-deletion')} className="block text-xs underline">Privacy and account deletion</a>
           <button
             type="button"
             onClick={signOut}
@@ -227,7 +228,7 @@ function WorkspaceRouter() {
 }
 
 export default function App() {
-  const path = window.location.pathname.replace(/\/$/, '');
+  const path = currentAppPage();
   return (
     <ErrorBoundary>
       <ThemeProvider>

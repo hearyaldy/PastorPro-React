@@ -1,55 +1,73 @@
-# PastorPro landing page
+# PastorPro website hosting
 
-Created 2026-11-27 as a separate, buildless page in `landing/`. It introduces the
-app’s pastoral activities, Borang B, church finances, quarterly reporting and
-mission-team workflows, with a clearly labelled illustrative workspace.
+The landing page and React WebApp are hosted together on GitHub Pages in
+`hearyaldy/PastorPro-React`. The repository stays private; the generated website
+is public. No Firebase Hosting access is needed to publish updates.
 
-The page is responsive and uses no Firebase, user records, analytics scripts or
-external image/font dependencies. Its preview tabs support keyboard navigation;
-FAQs use native disclosures. WebApp buttons are prominent in the header, hero
-and closing call to action.
+- Landing page: https://hearyaldy.github.io/PastorPro-React/
+- WebApp: https://hearyaldy.github.io/PastorPro-React/app/
+- Privacy: https://hearyaldy.github.io/PastorPro-React/app/privacy-policy/
+- Account deletion: https://hearyaldy.github.io/PastorPro-React/app/account-deletion/
 
-## WebApp link
+## Build and publish
 
-The React WebApp is deployed to https://pastor-report-e4c52.web.app/ .
-`landing/config.js` connects all three WebApp buttons to this URL, including
-when previewing the landing page locally.
-All three anchors also contain the live URL directly, so the WebApp link works
-without JavaScript. Configuration/script URLs are versioned to refresh older
-browser caches after the initial unconfigured landing release.
+Run `npm ci` after checking out the repository, then:
 
-- If the configured URL is removed, localhost falls back to the local app;
-  published hosts display the link-not-configured dialog.
-- Deploy the app with `npm run build` followed by
-  `firebase deploy --only hosting --config firebase.hosting.json --project pastor-report-e4c52`.
-  This separate config publishes `dist/` with SPA rewrites; it does not deploy
-  Firestore rules or account-deletion functions.
-- Firebase Hosting release: `779bc49bf68e9972` (2026-11-27).
+```sh
+npm run test:pages
+npm run deploy:pages
+```
 
-Live Chrome verification passed: the published landing button opens the app's
-sign-in screen, Home returns to the landing page, and `/privacy-policy` and
-`/account-deletion` render over HTTPS with HTTP 200 and no page errors. Firebase
-Auth's public configuration includes the Hosting domain. Signed-in report
-workflows were not exercised with a real user account.
+`build:pages` builds React with base `/PastorPro-React/app/`, combines the build
+with the standalone `landing/` files in ignored `dist-pages/`, and emits physical
+index documents for the public privacy/deletion routes. Internal app navigation
+uses component state, so it needs no server SPA rewrites. Public links use Vite's
+base path and remain valid in local development and on subpath hosts.
 
-## Repository publication
+`publish-pages.mjs` clones the current `gh-pages` branch into a temporary directory,
+replaces its generated app and landing files, commits and pushes with ordinary
+Git credentials, then removes the temporary checkout. It preserves unrelated
+published files and uses a normal push, so concurrent changes are not overwritten.
+Pages must use `gh-pages`, `/`, with `.nojekyll`. It may take a short time for the
+Pages build and CDN to show the new commit. Main-branch pushes alone do not deploy;
+run the publish command when a new web version is ready.
 
-Repository: `hearyaldy/PastorPro-React` (private; visibility was not changed).
-The GitHub connector could not access this repository, so publication used the
-existing device Git credentials through GitHub’s REST API, kept only in memory.
+All three WebApp buttons contain the direct GitHub Pages app URL and also support
+an override in `landing/config.js`. Scripts use versioned URLs so browsers refresh
+the configuration from the previous Firebase-hosted release. The landing page is
+buildless and does not load Firebase or user data. Its sample workspace is labelled
+illustrative. Only generated web artifacts are published; source documents,
+Firebase credentials, backend code and local environment files are excluded.
 
-Only `landing/` contents were published as the root of the `gh-pages` branch.
-The local app working tree, backend, audit documents and unpublished changes were
-not included in the public Pages artifact. The app’s `main` branch was not moved.
+## Authentication and backend
 
-Source commit: `97cea05d7f298907e56af4e8c262e2f04e5b3974`.
-WebApp link update: `e12dee0607d694edf4d0c6570607b01805c40eb1`.
-Pages source: `gh-pages`, `/`, with `.nojekyll`.
-Target URL: https://hearyaldy.github.io/PastorPro-React/
+Firebase project `pastor-report-e4c52` continues to supply Auth and Firestore.
+The host `hearyaldy.github.io` was added to its authorized sign-in domains and
+verified by read-back while preserving existing domains. Account deletion still
+requires the separate, pending functions/rules deployment described in
+`PRIVACY_ACCOUNT_DELETION.md`. Web hosting does not deploy those services.
+Signing in on the new origin requires signing in again; browser-local storage,
+caches and downloaded files from the old origin do not migrate automatically.
 
-A browser test passed for desktop and 390px layout, local/published WebApp behavior,
-sample tabs with keyboard interaction, FAQs and configured app URL propagation.
-Desktop/mobile screenshots were inspected, JavaScript syntax checks passed and
-`git diff --check` passed. GitHub reports the published commit as built; the
-live URL returned HTTP 200 with the expected page. A live Chrome check confirmed
-that assets load, the WebApp setup dialog opens, and no page errors occur.
+## Validation
+
+`test:pages` serves the generated artifact under the actual repository prefix
+and checks the sign-in screen, nested privacy/deletion pages and refreshes, WebApp
+links, asset requests, mobile overflow and browser errors. It can also target a
+published host with `PAGES_TEST_ORIGIN=https://hearyaldy.github.io` when running
+`node --import tsx --test tests/pagesHosting.browser.ts`.
+
+Migration published as Pages commits `3645a5f` (app) and `0298882` (instructions).
+Deployment job `46025193837` succeeded. Live Chrome passed app/asset loading,
+landing-to-app and Home navigation, direct privacy/deletion links and refreshes,
+mobile layout, and no page errors. TypeScript and all 37 unit tests also passed.
+Signed-in workflows still require verification with the user's own account.
+
+## Earlier publication
+
+The standalone landing page was first published to `gh-pages` at
+`97cea05d7f298907e56af4e8c262e2f04e5b3974`. The React app was initially deployed
+to Firebase Hosting release `779bc49bf68e9972`, but the user could not manage that
+hosting and explicitly requested migration to GitHub Pages. The prior Hosting
+configuration is retained as historical setup; current app links use GitHub Pages.
+The earlier Firebase Hosting copy has not been disabled by this migration.

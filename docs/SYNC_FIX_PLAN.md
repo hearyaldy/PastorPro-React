@@ -538,3 +538,27 @@ Source and setup: `LANDING_PAGE.md`. Local preview: `/landing/`.
       opens the published landing page in Chrome.
 
 Destination: https://hearyaldy.github.io/PastorPro-React/ .
+
+
+## Move WebApp hosting to GitHub Pages — 2026-11-27
+
+User could not access Firebase Hosting and explicitly approved hosting the app
+beside the landing page in their GitHub repository.
+
+- [x] Build app under `/PastorPro-React/app/` and retain the landing page at root.
+- [x] Resolve public links against Vite's base; emit actual privacy/deletion page
+      documents so direct links and refreshes work without SPA server rewrites.
+- [x] Point all landing buttons at the Pages app URL and refresh script versions.
+- [x] Add repeatable `build:pages`, `test:pages`, and `deploy:pages` commands;
+      generated app/landing files only go to `gh-pages` through normal Git auth.
+- [x] Add and read back Firebase Auth authorized domain `hearyaldy.github.io`,
+      preserving all existing domains. Auth/Firestore remain on the same project.
+- [x] TypeScript and local artifact Chrome checks pass for assets, nested routes,
+      refreshes, mobile layout and page errors.
+- [x] Publish Pages app at `3645a5f`, then hosting instructions at `0298882`;
+      GitHub deployment job `46025193837` succeeded. Live Chrome verifies
+      landing-to-app/Home navigation, public routes and refreshes, mobile layout,
+      no missing assets or page errors. All 37 unit tests and TypeScript pass.
+- [ ] Verify authenticated workflows with the user's own account.
+
+Current destinations and publication instructions: `LANDING_PAGE.md`.

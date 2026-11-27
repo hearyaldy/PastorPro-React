@@ -1,3 +1,4 @@
+import { appPath } from '../lib/appPaths';
 import React, { useState } from 'react';
 import { LandingHomeLink } from './LandingHomeLink';
 import {
@@ -228,7 +229,7 @@ export function AuthGate() {
           </div>
         </section>
       </main>
-      <footer className="flex flex-wrap justify-center gap-6 p-5 text-xs text-[var(--text-secondary)]"><a className="underline" href="/privacy-policy">Privacy policy</a><a className="underline" href="/account-deletion">Account deletion</a></footer>
+      <footer className="flex flex-wrap justify-center gap-6 p-5 text-xs text-[var(--text-secondary)]"><a className="underline" href={appPath('privacy-policy')}>Privacy policy</a><a className="underline" href={appPath('account-deletion')}>Account deletion</a></footer>
     </div>
   );
 }

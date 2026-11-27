@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { chromium } from 'playwright-core';
 test('landing page is responsive, links to the deployed WebApp, and handles an unconfigured URL', async () => {
   const html = await readFile('landing/index.html', 'utf8');
-  assert.equal((html.match(/class="[^"]*webapp-link" href="https:\/\/pastor-report-e4c52\.web\.app\/"/g) || []).length, 3);
+  assert.equal((html.match(/class="[^"]*webapp-link" href="https:\/\/hearyaldy\.github\.io\/PastorPro-React\/app\/"/g) || []).length, 3);
   const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true });
   try {
     const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } });
@@ -12,7 +12,7 @@ test('landing page is responsive, links to the deployed WebApp, and handles an u
     const origin = process.env.REPORT_TEST_ORIGIN || 'http://127.0.0.1:3000';
     await page.goto(`${origin}/landing/`);
     await page.getByRole('heading', { name: 'More time for ministry. Less time on paperwork.' }).waitFor();
-    assert.equal(await page.getByRole('link', { name: 'WebApp', exact: false }).first().getAttribute('href'), 'https://pastor-report-e4c52.web.app/');
+    assert.equal(await page.getByRole('link', { name: 'WebApp', exact: false }).first().getAttribute('href'), 'https://hearyaldy.github.io/PastorPro-React/app/');
     await page.getByRole('tab', { name: 'Reports', exact: true }).click();
     assert.ok(await page.getByRole('heading', { name: 'Clear questions. Complete reports.' }).isVisible());
     await page.getByRole('tab', { name: 'Reports', exact: true }).press('End');
@@ -36,7 +36,7 @@ test('landing page is responsive, links to the deployed WebApp, and handles an u
       catch { await route.fulfill({ status: 404, body: 'Not found' }); }
     });
     await page.goto('https://landing.example/');
-    assert.equal(await page.getByRole('link', { name: 'WebApp', exact: false }).first().getAttribute('href'), 'https://pastor-report-e4c52.web.app/');
+    assert.equal(await page.getByRole('link', { name: 'WebApp', exact: false }).first().getAttribute('href'), 'https://hearyaldy.github.io/PastorPro-React/app/');
     await page.route('https://landing.example/config.js*', route => route.fulfill({ contentType: 'application/javascript', body: "window.PASTORPRO_WEBAPP_URL='';" }));
     await page.reload();
     await page.getByRole('link', { name: 'WebApp', exact: false }).first().click();

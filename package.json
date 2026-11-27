@@ -7,6 +7,9 @@
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
     "build": "vite build",
+    "build:pages": "node scripts/build-pages.mjs",
+    "test:pages": "npm run build:pages && node --import tsx --test tests/pagesHosting.browser.ts",
+    "deploy:pages": "npm run build:pages && node scripts/publish-pages.mjs",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
