@@ -1,3 +1,6 @@
+import { StatisticsCards } from '../components/StatisticsCards';
+import { ReportPreview } from '../components/ReportPreview';
+import type { PrintableReport } from '../lib/pdfReport';
 import React, { useMemo, useState } from 'react';
 import {
   addDoc,
@@ -18,6 +21,7 @@ export function ResourcesSettingsPage() {
   const { notify } = useToast();
 
   // Library filters
+  const [preview, setPreview] = useState<PrintableReport | null>(null);
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
 
@@ -93,27 +97,16 @@ export function ResourcesSettingsPage() {
 
   return (
     <div className="space-y-6">
-      {/* Summary Strip */}
-      <div className="grid grid-cols-2 lg:grid-cols-3 border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] divide-y sm:divide-y-0 sm:divide-x divide-[var(--border-hairline)]">
-        <div className="px-5 py-4">
-          <div className="text-xs text-[var(--text-muted)]">Published Documents</div>
-          <div className="text-xl font-mono-tabular font-semibold mt-1">
-            {resources.length}
-          </div>
-        </div>
-        <div className="px-5 py-4">
-          <div className="text-xs text-[var(--text-muted)]">Resource Categories</div>
-          <div className="text-xl font-mono-tabular font-semibold mt-1">
-            {categories.length}
-          </div>
-        </div>
-        <div className="px-5 py-4 col-span-2 lg:col-span-1">
-          <div className="text-xs text-[var(--text-muted)]">Matching Library Items</div>
-          <div className="text-xl font-mono-tabular font-semibold mt-1">
-            {filteredResources.length}
-          </div>
-        </div>
-      </div>
+      <StatisticsCards items={[
+        { label: 'Published Documents', value: resources.length, icon: 'activity', color: 'blue' },
+        { label: 'Resource Categories', value: categories.length, icon: 'people', color: 'purple' },
+        { label: 'Matching Library Items', value: filteredResources.length, icon: 'check', color: 'green' },
+      ]} />
+      <button className="no-print text-xs border border-[var(--border-hairline)] rounded-lg px-3 py-2" onClick={() => setPreview({
+        title: 'Mission Resource Library', subtitle: `${filteredResources.length} matching documents`, filename: 'Mission_Resource_Library',
+        sections: [{ title: 'Resource Directory', columns: ['Title', 'Category', 'URL'], rows: filteredResources.map(resource => [resource.title, resource.category, resource.url]) }],
+      })}>Preview / Print Resource List</button>
+      {preview && <ReportPreview report={preview} onClose={() => setPreview(null)} />}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
         {/* Left: Resource Library Browser */}

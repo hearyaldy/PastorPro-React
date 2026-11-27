@@ -1,3 +1,9 @@
+import { useHierarchyLabels } from '../hooks/useHierarchyLabels';
+import { MissionReportingDashboard, type MissionReportContext } from '../components/MissionReportingDashboard';
+import { assignedMission, hasAlias, missionEntities } from '../lib/missionReporting';
+import { StatisticsCards } from '../components/StatisticsCards';
+import { ReportPreview } from '../components/ReportPreview';
+import type { PrintableReport } from '../lib/pdfReport';
 import { useMemo, useState } from 'react';
 import {
   Building2,
@@ -16,11 +22,14 @@ import { formatIsoDate } from '../lib/exportUtils';
 import type { NavRouteId } from '../components/WorkspaceShell';
 
 export function MyMissionPage({
-  onNavigate,
+  onNavigate, onReportNavigate,
 }: {
   onNavigate: (route: NavRouteId) => void;
+  onReportNavigate: (route: 'borang-b' | 'financial-reports', context: MissionReportContext) => void;
 }) {
+  const labels = useHierarchyLabels();
   const { profile } = useAuth();
+  const [preview, setPreview] = useState<PrintableReport | null>(null);
   const {
     unions,
     missions,
@@ -40,42 +49,44 @@ export function MyMissionPage({
   const [search, setSearch] = useState<string>('');
 
   const activeMission = useMemo(() => {
-    const id = selectedMissionId || profile?.missionId || missions[0]?.id;
-    return missions.find((m) => m.id === id) || missions[0] || null;
-  }, [selectedMissionId, profile?.missionId, missions]);
+    if (!profile) return null;
+    if (profile.userRole === 'super_admin' && selectedMissionId) return missions.find(mission => mission.id === selectedMissionId) || null;
+    return assignedMission(profile, missions);
+  }, [selectedMissionId, profile, missions]);
+  const entities = useMemo(() => activeMission ? missionEntities(activeMission, districts, churches, staff) : { districts: [], churches: [], staff: [] }, [activeMission, districts, churches, staff]);
 
   const parentUnion = useMemo(() => {
-    if (!activeMission?.unionId) return unions[0] || null;
+    if (!activeMission?.unionId) return null;
     return unions.find((u) => u.id === activeMission.unionId) || null;
   }, [activeMission, unions]);
 
   const missionRegions = useMemo(
-    () => regions.filter((r) => !activeMission || r.missionId === activeMission.id),
+    () => regions.filter((r) => activeMission && hasAlias(r.missionId, activeMission)),
     [regions, activeMission],
   );
 
   const missionDistricts = useMemo(
-    () => districts.filter((d) => !activeMission || d.missionId === activeMission.id),
-    [districts, activeMission],
+    () => entities.districts,
+    [entities],
   );
 
   const missionChurches = useMemo(
-    () => churches.filter((c) => !activeMission || c.missionId === activeMission.id),
-    [churches, activeMission],
+    () => entities.churches,
+    [entities],
   );
 
   const missionStaff = useMemo(
-    () => staff.filter((s) => !activeMission || s.missionId === activeMission.id),
-    [staff, activeMission],
+    () => entities.staff,
+    [entities],
   );
 
   const missionDepartments = useMemo(
-    () => departments.filter((d) => !activeMission || d.missionId === activeMission.id),
+    () => departments.filter((d) => activeMission && hasAlias(d.missionId, activeMission)),
     [departments, activeMission],
   );
 
   const missionEvents = useMemo(
-    () => globalEvents.filter((e) => !activeMission || e.missionId === activeMission.id),
+    () => globalEvents.filter((e) => activeMission && hasAlias(e.missionId, activeMission)),
     [globalEvents, activeMission],
   );
 
@@ -155,19 +166,19 @@ export function MyMissionPage({
               </span>
             )}
             <span>
-              Your Assignment: {profile?.regionName || 'Unassigned Region'} ·{' '}
-              {profile?.districtName || 'Unassigned District'}
+              Your Assignment: {labels.region(profile?.regionId, profile?.regionName)} ·{' '}
+              {labels.district(profile?.districtId, profile?.districtName)}
             </span>
           </div>
         </div>
 
-        {missions.length > 1 && (
+        {profile?.userRole === 'super_admin' && (
           <div className="shrink-0">
             <label className="block text-[11px] text-[var(--text-muted)] mb-1">
               Viewing Mission
             </label>
             <select
-              value={activeMission?.id || ''}
+              value={selectedMissionId}
               onChange={(e) => {
                 setSelectedMissionId(e.target.value);
                 setRegionFilter('all');
@@ -175,6 +186,7 @@ export function MyMissionPage({
               }}
               className="px-3 py-2 text-xs rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)]"
             >
+              <option value="">My assigned mission</option>
               {missions.map((m) => (
                 <option key={m.id} value={m.id}>
                   {m.name} ({m.code})
@@ -185,33 +197,23 @@ export function MyMissionPage({
         )}
       </div>
 
-      {/* 4-Column KPI Strip */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] divide-y sm:divide-y-0 sm:divide-x divide-[var(--border-hairline)]">
-        <div className="px-5 py-4">
-          <div className="text-xs text-[var(--text-muted)]">Regions & Districts</div>
-          <div className="text-xl font-mono-tabular font-semibold mt-1">
-            {missionRegions.length} · {missionDistricts.length}
-          </div>
-        </div>
-        <div className="px-5 py-4">
-          <div className="text-xs text-[var(--text-muted)]">Organized Churches</div>
-          <div className="text-xl font-mono-tabular font-semibold mt-1">
-            {missionChurches.length}
-          </div>
-        </div>
-        <div className="px-5 py-4">
-          <div className="text-xs text-[var(--text-muted)]">Reported Membership</div>
-          <div className="text-xl font-mono-tabular font-semibold mt-1">
-            {totalMembers.toLocaleString()}
-          </div>
-        </div>
-        <div className="px-5 py-4">
-          <div className="text-xs text-[var(--text-muted)]">Mission Workers</div>
-          <div className="text-xl font-mono-tabular font-semibold mt-1">
-            {missionStaff.length}
-          </div>
-        </div>
-      </div>
+      {!loadingHierarchy && !activeMission && <div role="status" className="rounded-xl border border-amber-300 bg-amber-50 text-amber-900 p-5">Your account has no matching mission assignment. Ask an administrator to assign your mission{profile?.userRole === 'super_admin' ? ', or select a mission above' : ''}.</div>}
+      {activeMission && profile && <MissionReportingDashboard key={`${profile.uid}:${profile.userRole}:${activeMission.id}`} profile={profile} mission={activeMission} districts={missionDistricts} churches={missionChurches}
+        onBorang={context => onReportNavigate('borang-b', context)} onFinance={context => onReportNavigate('financial-reports', context)} />}
+      <h3 className="font-semibold">Mission Directory · {activeMission?.name || 'No mission assigned'}</h3>
+      <StatisticsCards items={[
+        { label: 'Regions & Districts', value: `${missionRegions.length} / ${missionDistricts.length}`, icon: 'distance', color: 'blue' },
+        { label: 'Organized Churches', value: missionChurches.length, icon: 'people', color: 'purple' },
+        { label: 'Reported Membership', value: totalMembers.toLocaleString(), icon: 'people', color: 'green' },
+        { label: 'Mission Workers', value: missionStaff.length, icon: 'people', color: 'orange' },
+      ]} />
+      <button className="no-print text-xs border border-[var(--border-hairline)] rounded-lg px-3 py-2" onClick={() => setPreview({
+        title: 'Mission Statistics & Directory', subtitle: activeMission?.name || '', filename: 'Mission_Statistics',
+        summary: [['Churches', missionChurches.length], ['Membership', totalMembers], ['Workers', missionStaff.length]],
+        sections: [{ title: 'Churches', columns: ['Church', 'District', 'Membership'], rows: missionChurches.map(church => [church.name, labels.district(church.districtId), church.memberCount || 0]) },
+          { title: 'Mission Workers', columns: ['Name', 'Position', 'Email'], rows: missionStaff.map(member => [member.fullName, member.position, member.email || '-']) }],
+      })}>Preview / Print Mission Statistics</button>
+      {preview && <ReportPreview report={preview} onClose={() => setPreview(null)} />}
 
       {/* Segmented Tabs + Search */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">

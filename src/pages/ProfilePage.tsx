@@ -1,3 +1,4 @@
+import { useHierarchyLabels } from '../hooks/useHierarchyLabels';
 import React, { useEffect, useMemo, useState } from 'react';
 import { addDoc, collection, onSnapshot, query, serverTimestamp, where } from 'firebase/firestore';
 import { Check, MapPinPlus, Shield, User } from 'lucide-react';
@@ -8,6 +9,7 @@ import { useToast } from '../components/Toast';
 import { ROLE_META } from '../types';
 
 export function ProfilePage() {
+  const labels = useHierarchyLabels();
   const { profile, updateOwnProfile } = useAuth();
   const { unions, missions, regions, districts, churches } = useMission();
   const { notify } = useToast();
@@ -85,11 +87,7 @@ export function ProfilePage() {
   );
 
   const selectedMission = missions.find((m) => m.id === (profile?.missionId || missionId));
-  const resolvedUnionName =
-    unions.find((u) => u.id === (profile?.unionId || selectedMission?.unionId))?.name ||
-    profile?.unionName ||
-    selectedMission?.unionName ||
-    'Malaysia Union Mission';
+  const resolvedUnionName = labels.union(profile?.unionId || selectedMission?.unionId, profile?.unionName || selectedMission?.unionName);
 
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -112,6 +110,7 @@ export function ProfilePage() {
 
   const handleSaveAssignment = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!profile || profile.onboardingCompleted || profile.userRole !== 'user') return;
     setSavingAssignment(true);
     const mission = missions.find((m) => m.id === missionId);
     const region = regions.find((r) => r.id === regionId);
@@ -148,6 +147,7 @@ export function ProfilePage() {
       await addDoc(collection(db, 'locationRequests'), {
         userId: profile.uid,
         requestedBy: profile.uid,
+        missionId: profile.missionId || '',
         userName: profile.displayName,
         userEmail: profile.email,
         missionName: selectedMission?.name || 'General Mission',
@@ -308,7 +308,11 @@ export function ProfilePage() {
             <span className="text-xs text-[var(--text-muted)]">{resolvedUnionName}</span>
           </div>
 
+          <p className="text-xs text-[var(--text-secondary)]">
+            Administrators manage your saved mission and church assignment. Contact your mission administrator to request a change.
+          </p>
           <form onSubmit={handleSaveAssignment} className="space-y-4">
+            <fieldset disabled={Boolean(profile?.onboardingCompleted || profile?.userRole !== 'user')} className="space-y-4 disabled:opacity-70">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs text-[var(--text-secondary)] mb-1">
@@ -395,6 +399,8 @@ export function ProfilePage() {
               </div>
             </div>
 
+            </fieldset>
+
             <div className="p-3.5 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-subtle)] text-xs text-[var(--text-secondary)]">
               Role permissions: <span className="font-semibold text-[var(--text-primary)]">{ROLE_META[profile.userRole].summary}</span>
             </div>
@@ -411,7 +417,7 @@ export function ProfilePage() {
 
               <button
                 type="submit"
-                disabled={savingAssignment}
+                disabled={savingAssignment || profile.onboardingCompleted || profile.userRole !== 'user'}
                 className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium rounded-lg bg-[var(--accent-primary)] text-white hover:bg-[var(--accent-hover)] disabled:opacity-60 whitespace-nowrap"
               >
                 <Check className="w-3.5 h-3.5" />

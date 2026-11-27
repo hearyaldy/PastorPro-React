@@ -1,3 +1,10 @@
+import { useHierarchyLabels } from '../hooks/useHierarchyLabels';
+import { StatisticsCards } from '../components/StatisticsCards';
+import { ReportPreview } from '../components/ReportPreview';
+import type { PrintableReport } from '../lib/pdfReport';
+import { readAppointment, readTodo } from '../lib/scheduleViews';
+import { readBorangB } from '../lib/borangB';
+import { readActivity } from '../lib/activities';
 import { useEffect, useState } from 'react';
 import {
   collection,
@@ -36,11 +43,14 @@ export function DashboardOverview({
 }: {
   onNavigate: (route: NavRouteId) => void;
 }) {
+  const labels = useHierarchyLabels();
   const { profile, capabilities } = useAuth();
   const { missions, churches, districts, globalEvents, loadingHierarchy } =
     useMission();
   const { notify } = useToast();
 
+  const [preview, setPreview] = useState<PrintableReport | null>(null);
+  const [localEvents, setLocalEvents] = useState<{ title: string; startDate: string }[]>([]);
   const [recentActivities, setRecentActivities] = useState<PastoralActivity[]>([]);
   const [borangBList, setBorangBList] = useState<BorangBReport[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
@@ -57,6 +67,7 @@ export function DashboardOverview({
     setLoadingData(true);
 
     const unsubs = [
+      onSnapshot(query(collection(db, 'events'), where('userId', '==', profile.uid)), snap => setLocalEvents(snap.docs.map(d => ({ title: String(d.data().title || ''), startDate: String(d.data().startDate || '') }))), err => reportListenerError(err, OperationType.LIST, 'events')),
       onSnapshot(
         query(
           collection(db, 'activities'),
@@ -64,12 +75,8 @@ export function DashboardOverview({
         ),
         (snap) => {
           const items = snap.docs
-            .map((d) => ({
-              id: d.id,
-              ...(d.data() as Omit<PastoralActivity, 'id'>),
-            }))
-            .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))
-            .slice(0, 5);
+            .map((d) => readActivity(d.id, d.data()))
+            .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
           setRecentActivities(items);
           setLoadingData(false);
         },
@@ -85,12 +92,9 @@ export function DashboardOverview({
         ),
         (snap) => {
           const items = snap.docs
-            .map((d) => ({
-              id: d.id,
-              ...(d.data() as Omit<BorangBReport, 'id'>),
-            }))
-            .sort((a, b) => (b.year - a.year) || (b.month - a.month))
-            .slice(0, 6);
+            .map((d) => readBorangB(d.id, d.data()))
+            .filter((item): item is BorangBReport => item !== null)
+            .sort((a, b) => (b.year - a.year) || (b.month - a.month));
           setBorangBList(items);
         },
         (err) => {
@@ -104,12 +108,8 @@ export function DashboardOverview({
         ),
         (snap) => {
           const items = snap.docs
-            .map((d) => ({
-              id: d.id,
-              ...(d.data() as Omit<Appointment, 'id'>),
-            }))
-            .sort((a, b) => String(a.dateTime || '').localeCompare(String(b.dateTime || '')))
-            .slice(0, 5);
+            .map((d) => readAppointment(d.id, d.data()))
+            .sort((a, b) => String(a.dateTime || '').localeCompare(String(b.dateTime || '')));
           setAppointments(items);
         },
         (err) => {
@@ -120,14 +120,10 @@ export function DashboardOverview({
         query(
           collection(db, 'todos'),
           where('userId', '==', profile.uid),
-          limit(8),
         ),
         (snap) => {
           setTodos(
-            snap.docs.map((d) => ({
-              id: d.id,
-              ...(d.data() as Omit<TodoItem, 'id'>),
-            })),
+            snap.docs.map((d) => readTodo(d.id, d.data())),
           );
         },
         (err) => {
@@ -144,8 +140,9 @@ export function DashboardOverview({
   );
   const openTodos = todos.filter((t) => !t.completed);
   const scheduledAppointments = appointments.filter(
-    (a) => a.status === 'scheduled',
+    (a) => a.status === 'scheduled' && new Date(a.dateTime).getTime() > Date.now(),
   );
+  const upcomingEventCount = localEvents.filter(event => new Date(event.startDate).getTime() > Date.now()).length + scheduledAppointments.length;
   const totalMinutesLogged = recentActivities.reduce(
     (acc, a) => acc + (a.durationMinutes || 0),
     0,
@@ -171,8 +168,8 @@ export function DashboardOverview({
         <div>
           <div className="text-xs text-[var(--text-muted)]">
             {profile ? ROLE_META[profile.userRole].label : 'User'}
-            {profile?.districtName ? ` · ${profile.districtName}` : ''}
-            {profile?.churchName ? ` · ${profile.churchName}` : ''}
+            {(profile?.districtId || profile?.districtName) ? ` · ${labels.district(profile?.districtId, profile?.districtName)}` : ''}
+            {(profile?.churchId || profile?.churchName) ? ` · ${labels.church(profile?.churchId, profile?.churchName)}` : ''}
           </div>
           <h2 className="text-2xl font-display font-semibold tracking-tight mt-1">
             Welcome back, {profile?.displayName}
@@ -217,72 +214,21 @@ export function DashboardOverview({
         </div>
       )}
 
-      {/* 4-Column Hairline KPI Strip */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] divide-y sm:divide-y-0 sm:divide-x divide-[var(--border-hairline)]">
-        <div className="p-5">
-          <div className="text-xs text-[var(--text-muted)]">
-            {MONTHS[currentMonth - 1]} {currentYear} Borang B
-          </div>
-          <div className="mt-2 flex items-baseline justify-between">
-            <span className="text-xl font-display font-semibold">
-              {currentBorangB
-                ? currentBorangB.status === 'submitted'
-                  ? 'Submitted'
-                  : 'Draft Saved'
-                : 'Not Started'}
-            </span>
-            <button
-              type="button"
-              onClick={() => onNavigate('borang-b')}
-              className="text-xs font-medium text-[var(--accent-primary)] hover:underline"
-            >
-              Open
-            </button>
-          </div>
-        </div>
-
-        <div className="p-5">
-          <div className="text-xs text-[var(--text-muted)]">Recent Ministry Hours</div>
-          <div className="mt-2 flex items-baseline justify-between">
-            <span className="text-xl font-mono-tabular font-semibold">
-              {(totalMinutesLogged / 60).toFixed(1)} hrs
-            </span>
-            <span className="text-xs text-[var(--text-muted)] font-mono-tabular">
-              {recentActivities.length} logs
-            </span>
-          </div>
-        </div>
-
-        <div className="p-5">
-          <div className="text-xs text-[var(--text-muted)]">
-            Scheduled Appointments & To-Dos
-          </div>
-          <div className="mt-2 flex items-baseline justify-between">
-            <span className="text-xl font-mono-tabular font-semibold">
-              {scheduledAppointments.length} / {openTodos.length}
-            </span>
-            <button
-              type="button"
-              onClick={() => onNavigate('appointments-todos')}
-              className="text-xs font-medium text-[var(--accent-primary)] hover:underline"
-            >
-              Manage
-            </button>
-          </div>
-        </div>
-
-        <div className="p-5">
-          <div className="text-xs text-[var(--text-muted)]">Mission Directory</div>
-          <div className="mt-2 flex items-baseline justify-between">
-            <span className="text-xl font-mono-tabular font-semibold">
-              {churches.length} Churches
-            </span>
-            <span className="text-xs text-[var(--text-muted)] font-mono-tabular">
-              {districts.length} Districts
-            </span>
-          </div>
-        </div>
-      </div>
+      <StatisticsCards items={[
+        { label: 'Pending Todos', value: openTodos.length, icon: 'check', color: 'blue' },
+        { label: 'Upcoming Events & Appointments', value: upcomingEventCount, icon: 'calendar', color: 'orange' },
+        { label: 'Activities', value: recentActivities.length, icon: 'activity', color: 'green' },
+        { label: `${MONTHS[currentMonth - 1]} Borang B`, value: currentBorangB ? currentBorangB.status === 'submitted' ? 'Submitted' : 'Draft Saved' : 'Not Started', icon: 'check', color: 'purple' },
+      ]} />
+      <button className="no-print text-xs border border-[var(--border-hairline)] rounded-lg px-3 py-2" onClick={() => setPreview({
+        title: 'Ministry Statistics Overview', subtitle: profile?.displayName || '', filename: 'Ministry_Statistics',
+        summary: [['Pending Todos', openTodos.length], ['Upcoming Events', upcomingEventCount], ['Activities', recentActivities.length]],
+        sections: [{ title: 'Pastoral Activities', columns: ['Date', 'Activities', 'KM'], rows: recentActivities.map(item => [item.date, item.title, item.mileage]) },
+          { title: 'Upcoming Appointments', columns: ['Date', 'Title'], rows: scheduledAppointments.map(item => [item.dateTime, item.title]) },
+          { title: 'Upcoming Events', columns: ['Date', 'Title'], rows: localEvents.filter(item => new Date(item.startDate).getTime() > Date.now()).map(item => [item.startDate, item.title]) },
+          { title: 'Pending Todos', rows: openTodos.map(item => [item.title, item.priority]) }],
+      })}>Preview / Print Statistics</button>
+      {preview && <ReportPreview report={preview} onClose={() => setPreview(null)} />}
 
       {/* Role-Specific Quick Modules */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -393,7 +339,7 @@ export function DashboardOverview({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[var(--border-hairline)]">
-                  {recentActivities.map((act) => (
+                  {recentActivities.slice(0, 5).map((act) => (
                     <tr
                       key={act.id}
                       className="hover:bg-[var(--bg-subtle)]/60 transition-colors"

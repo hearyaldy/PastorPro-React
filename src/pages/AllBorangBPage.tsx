@@ -1,6 +1,16 @@
+import { useHierarchyLabels } from '../hooks/useHierarchyLabels';
+import { BORANG_B_SECTIONS } from '../lib/borangB';
+import { StatisticsCards } from '../components/StatisticsCards';
+import { ReportPreview } from '../components/ReportPreview';
+import { ReportTables } from '../components/ReportTables';
+import { borangBDocument } from '../lib/reportDocuments';
+import type { PrintableReport } from '../lib/pdfReport';
+import { readBorangB } from '../lib/borangB';
 import { useEffect, useMemo, useState } from 'react';
 import { collection, onSnapshot } from 'firebase/firestore';
 import { CheckCircle2, Clock, Download, Eye, FileJson, Printer, Search, X } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
+import { missionQuery } from '../lib/queryScope';
 import { useMission } from '../contexts/MissionContext';
 import { db, OperationType, reportListenerError } from '../lib/firebase';
 import {
@@ -8,18 +18,22 @@ import {
   exportToExcel,
   exportToJson,
   MONTHS,
-  triggerPrintPdf,
+  formatCurrencyRM,
 } from '../lib/exportUtils';
 import { useToast } from '../components/Toast';
 import type { BorangBReport } from '../types';
 
 export function AllBorangBPage() {
+  const labels = useHierarchyLabels();
+  const { profile, capabilities } = useAuth();
   const { districts, regions, staff } = useMission();
   const { notify } = useToast();
 
   const now = new Date();
   const [viewMode, setViewMode] = useState<'reports' | 'tracker'>('reports');
-  const [reports, setReports] = useState<BorangBReport[]>([]);
+  const [preview, setPreview] = useState<PrintableReport | null>(null);
+  const [storedReports, setReports] = useState<BorangBReport[]>([]);
+  const reports = useMemo(() => storedReports.map(report => labels.withNames(report)), [storedReports, labels]);
   const [loading, setLoading] = useState(true);
 
   // Reports browser filters
@@ -37,15 +51,14 @@ export function AllBorangBPage() {
   const [trackerStatusFilter, setTrackerStatusFilter] = useState<'all' | 'submitted' | 'draft' | 'missing'>('all');
 
   useEffect(() => {
+    if (!profile || !capabilities.canAccessAllBorangB) return;
     setLoading(true);
     const unsub = onSnapshot(
-      collection(db, 'borang_b_reports'),
+      missionQuery(db, 'borang_b_reports', profile),
       (snap) => {
         const items = snap.docs
-          .map((d) => ({
-            id: d.id,
-            ...(d.data() as Omit<BorangBReport, 'id'>),
-          }))
+          .map((d) => readBorangB(d.id, d.data()))
+          .filter((item): item is BorangBReport => item !== null)
           .sort((a, b) => (b.year - a.year) || (b.month - a.month));
         setReports(items);
         setLoading(false);
@@ -56,7 +69,7 @@ export function AllBorangBPage() {
       },
     );
     return () => unsub();
-  }, []);
+  }, [profile, capabilities.canAccessAllBorangB]);
 
   const filtered = useMemo(() => {
     return reports.filter((r) => {
@@ -150,7 +163,7 @@ export function AllBorangBPage() {
         AssignedPastor: row.pastorName,
         Period: `${MONTHS[trackerMonth - 1]} ${trackerYear}`,
         Status: row.compliance,
-        Sermons: row.report?.sermonsPreached ?? 0,
+        SabbathServices: row.report?.sabbathServices ?? 0,
         Baptisms: row.report?.baptisms ?? 0,
       }));
       const base = `borang_b_tracker_${trackerYear}_${String(trackerMonth).padStart(2, '0')}`;
@@ -163,10 +176,11 @@ export function AllBorangBPage() {
 
     const rows = filtered.map((r) => ({
       Pastor: r.pastorName,
-      District: r.districtName || r.districtId,
+      District: labels.district(r.districtId, r.districtName),
       Period: `${MONTHS[(r.month || 1) - 1]} ${r.year}`,
       Status: r.status,
-      Sermons: r.sermonsPreached,
+      SabbathServices: r.sabbathServices,
+      LegacySermons: r.sermonsPreached,
       BibleStudies: r.bibleStudiesGiven,
       HomeVisits: r.homeVisitations,
       HospitalVisits: r.hospitalVisitations,
@@ -184,7 +198,7 @@ export function AllBorangBPage() {
   const totals = filtered.reduce(
     (acc, r) => ({
       sermons: acc.sermons + (r.sermonsPreached || 0),
-      visits: acc.visits + (r.homeVisitations || 0) + (r.hospitalVisitations || 0),
+      visits: acc.visits + (r.homeVisitations || 0) + (r.hospitalVisitations || 0) + (r.prisonVisitations || 0),
       studies: acc.studies + (r.bibleStudiesGiven || 0),
       baptisms: acc.baptisms + (r.baptisms || 0),
     }),
@@ -247,7 +261,14 @@ export function AllBorangBPage() {
           </button>
           <button
             type="button"
-            onClick={triggerPrintPdf}
+            onClick={() => setPreview(viewMode === 'tracker' ? {
+              title: 'Borang B Submission Tracker', subtitle: `${MONTHS[trackerMonth - 1]} ${trackerYear}`, filename: 'Borang_B_Submission_Tracker',
+              summary: [['Submission Rate', `${trackerSummary.rate}%`], ['Submitted', trackerSummary.submitted], ['Draft', trackerSummary.draft], ['Missing', trackerSummary.missing]],
+              sections: [{ title: 'District Compliance', columns: ['District', 'Region', 'Pastor', 'Status'], rows: trackerRows.map(row => [row.district.name, row.regionName, row.pastorName, row.compliance]) }],
+            } : {
+              title: 'Mission Borang B Statistics', subtitle: `${filtered.length} filtered reports`, filename: 'Mission_Borang_B_Statistics',
+              sections: [{ title: 'Reports', columns: ['Pastor', 'District', 'Period', 'Status', 'Baptisms', 'Members'], rows: filtered.map(report => [report.pastorName, labels.district(report.districtId, report.districtName), `${MONTHS[report.month - 1]} ${report.year}`, report.status, report.baptisms, report.membersEnd]) }],
+            })}
             className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)] whitespace-nowrap shrink-0"
           >
             <Printer className="w-3.5 h-3.5" />
@@ -317,32 +338,12 @@ export function AllBorangBPage() {
           </div>
 
           {/* Aggregate Totals */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] divide-y sm:divide-y-0 sm:divide-x divide-[var(--border-hairline)]">
-            <div className="px-5 py-3.5">
-              <div className="text-xs text-[var(--text-muted)]">Total Sermons</div>
-              <div className="text-lg font-mono-tabular font-semibold mt-0.5">
-                {totals.sermons.toLocaleString()}
-              </div>
-            </div>
-            <div className="px-5 py-3.5">
-              <div className="text-xs text-[var(--text-muted)]">Total Visitations</div>
-              <div className="text-lg font-mono-tabular font-semibold mt-0.5">
-                {totals.visits.toLocaleString()}
-              </div>
-            </div>
-            <div className="px-5 py-3.5">
-              <div className="text-xs text-[var(--text-muted)]">Total Bible Studies</div>
-              <div className="text-lg font-mono-tabular font-semibold mt-0.5">
-                {totals.studies.toLocaleString()}
-              </div>
-            </div>
-            <div className="px-5 py-3.5">
-              <div className="text-xs text-[var(--text-muted)]">Total Baptisms</div>
-              <div className="text-lg font-mono-tabular font-semibold mt-0.5">
-                {totals.baptisms.toLocaleString()}
-              </div>
-            </div>
-          </div>
+          <StatisticsCards items={[
+            { label: 'Total Reports', value: filtered.length, icon: 'activity', color: 'blue' },
+            { label: 'Baptisms', value: totals.baptisms, icon: 'people', color: 'teal' },
+            { label: 'Highest Membership', value: Math.max(0, ...filtered.map(report => report.membersEnd)), icon: 'people', color: 'blue', hint: 'Highest reported value, not a sum of monthly membership' },
+            { label: 'Tithes & Offerings', value: formatCurrencyRM(filtered.reduce((sum, report) => sum + report.tithe + report.offerings, 0)), icon: 'money', color: 'teal' },
+          ]} />
 
           <div className="border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] overflow-hidden print-sheet">
             {loading ? (
@@ -364,7 +365,7 @@ export function AllBorangBPage() {
                       <th className="py-3 px-4 font-medium">District</th>
                       <th className="py-3 px-4 font-medium">Period</th>
                       <th className="py-3 px-4 font-medium">Status</th>
-                      <th className="py-3 px-4 font-medium text-right">Sermons</th>
+                      <th className="py-3 px-4 font-medium text-right">Sabbath Services</th>
                       <th className="py-3 px-4 font-medium text-right">Visits</th>
                       <th className="py-3 px-4 font-medium text-right">Studies</th>
                       <th className="py-3 px-4 font-medium text-right">Baptisms</th>
@@ -376,7 +377,7 @@ export function AllBorangBPage() {
                       <tr key={r.id} className="hover:bg-[var(--bg-subtle)]/60">
                         <td className="py-3 px-4 font-medium">{r.pastorName}</td>
                         <td className="py-3 px-4 text-xs text-[var(--text-secondary)]">
-                          {r.districtName || r.districtId}
+                          {labels.district(r.districtId, r.districtName)}
                         </td>
                         <td className="py-3 px-4 text-xs font-mono-tabular whitespace-nowrap">
                           {MONTHS[(r.month || 1) - 1]} {r.year}
@@ -393,7 +394,7 @@ export function AllBorangBPage() {
                           </span>
                         </td>
                         <td className="py-3 px-4 text-right font-mono-tabular">
-                          {r.sermonsPreached}
+                          {r.sabbathServices}
                         </td>
                         <td className="py-3 px-4 text-right font-mono-tabular">
                           {(r.homeVisitations || 0) + (r.hospitalVisitations || 0)}
@@ -476,32 +477,12 @@ export function AllBorangBPage() {
             </select>
           </div>
 
-          <div className="grid grid-cols-2 lg:grid-cols-4 border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] divide-y sm:divide-y-0 sm:divide-x divide-[var(--border-hairline)]">
-            <div className="px-5 py-3.5">
-              <div className="text-xs text-[var(--text-muted)]">Submission Rate</div>
-              <div className="text-lg font-mono-tabular font-semibold mt-0.5 text-[var(--accent-primary)]">
-                {trackerSummary.rate}%
-              </div>
-            </div>
-            <div className="px-5 py-3.5">
-              <div className="text-xs text-[var(--text-muted)]">Submitted Districts</div>
-              <div className="text-lg font-mono-tabular font-semibold mt-0.5 text-emerald-700 dark:text-emerald-400">
-                {trackerSummary.submitted} / {trackerSummary.total}
-              </div>
-            </div>
-            <div className="px-5 py-3.5">
-              <div className="text-xs text-[var(--text-muted)]">Draft In Progress</div>
-              <div className="text-lg font-mono-tabular font-semibold mt-0.5 text-amber-700 dark:text-amber-400">
-                {trackerSummary.draft}
-              </div>
-            </div>
-            <div className="px-5 py-3.5">
-              <div className="text-xs text-[var(--text-muted)]">Awaiting Submission</div>
-              <div className="text-lg font-mono-tabular font-semibold mt-0.5 text-red-600 dark:text-red-400">
-                {trackerSummary.missing}
-              </div>
-            </div>
-          </div>
+          <StatisticsCards items={[
+            { label: 'Submission Rate', value: `${trackerSummary.rate}%`, icon: 'check', color: 'blue' },
+            { label: 'Submitted Districts', value: `${trackerSummary.submitted} / ${trackerSummary.total}`, icon: 'check', color: 'green' },
+            { label: 'Draft in Progress', value: trackerSummary.draft, icon: 'activity', color: 'orange' },
+            { label: 'Awaiting Submission', value: trackerSummary.missing, icon: 'calendar', color: 'purple' },
+          ]} />
 
           <div className="border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] overflow-hidden print-sheet">
             <div className="px-5 py-3.5 border-b border-[var(--border-hairline)] flex items-center justify-between">
@@ -525,7 +506,7 @@ export function AllBorangBPage() {
                       <th className="py-3 px-4 font-medium">Region</th>
                       <th className="py-3 px-4 font-medium">District Pastor</th>
                       <th className="py-3 px-4 font-medium">Status</th>
-                      <th className="py-3 px-4 font-medium text-right">Sermons</th>
+                      <th className="py-3 px-4 font-medium text-right">Sabbath Services</th>
                       <th className="py-3 px-4 font-medium text-right">Baptisms</th>
                       <th className="py-3 px-4 font-medium text-right no-print">Action</th>
                     </tr>
@@ -558,7 +539,7 @@ export function AllBorangBPage() {
                           )}
                         </td>
                         <td className="py-3 px-4 text-right font-mono-tabular">
-                          {report ? report.sermonsPreached : '—'}
+                          {report ? report.sabbathServices : '—'}
                         </td>
                         <td className="py-3 px-4 text-right font-mono-tabular">
                           {report ? report.baptisms : '—'}
@@ -588,6 +569,7 @@ export function AllBorangBPage() {
       )}
 
       {/* Inspection Slide-over Drawer */}
+      {preview && <ReportPreview report={preview} onClose={() => setPreview(null)} />}
       {selected && (
         <div className="fixed inset-0 z-50 bg-black/40 flex justify-end no-print">
           <div className="max-w-lg w-full h-full bg-[var(--bg-surface)] border-l border-[var(--border-hairline)] overflow-y-auto p-6 space-y-6">
@@ -600,7 +582,7 @@ export function AllBorangBPage() {
                   {selected.pastorName}
                 </h2>
                 <div className="text-xs text-[var(--text-secondary)]">
-                  {selected.districtName || selected.districtId}
+                  {labels.district(selected.districtId, selected.districtName)}
                 </div>
               </div>
               <button
@@ -612,57 +594,8 @@ export function AllBorangBPage() {
               </button>
             </div>
 
-            <div className="grid grid-cols-2 gap-3 text-sm">
-              {[
-                ['Sermons Preached', selected.sermonsPreached],
-                ['Bible Studies', selected.bibleStudiesGiven],
-                ['Home Visitations', selected.homeVisitations],
-                ['Hospital Visitations', selected.hospitalVisitations],
-                ['Counseling Sessions', selected.counselingSessions],
-                ['Evangelistic Meetings', selected.evangelisticMeetings],
-                ['Baptisms', selected.baptisms],
-                ['Professions of Faith', selected.professionsOfFaith],
-                ['Board Meetings', selected.boardMeetings],
-                ['Communion Services', selected.communionServices],
-                ['Anointings', selected.anointings ?? 0],
-                ['Weddings / Funerals', `${selected.weddings ?? 0} / ${selected.funerals ?? 0}`],
-              ].map(([label, val]) => (
-                <div
-                  key={String(label)}
-                  className="p-3 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)] flex items-center justify-between"
-                >
-                  <span className="text-xs text-[var(--text-secondary)]">{label}</span>
-                  <span className="font-mono-tabular font-semibold">{val}</span>
-                </div>
-              ))}
-            </div>
-
-            <div className="space-y-4 text-sm">
-              <div>
-                <div className="text-xs font-medium text-[var(--text-muted)] mb-1">
-                  Stewardship & Tithe Notes
-                </div>
-                <div className="p-3 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-xs leading-relaxed">
-                  {selected.titheFaithfulnessNotes || 'No notes provided.'}
-                </div>
-              </div>
-              <div>
-                <div className="text-xs font-medium text-[var(--text-muted)] mb-1">
-                  Challenges & Prayer Requests
-                </div>
-                <div className="p-3 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-xs leading-relaxed">
-                  {selected.challengesAndPrayer || 'No notes provided.'}
-                </div>
-              </div>
-              <div>
-                <div className="text-xs font-medium text-[var(--text-muted)] mb-1">
-                  Next Month Goals
-                </div>
-                <div className="p-3 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-xs leading-relaxed">
-                  {selected.nextMonthGoals || 'No notes provided.'}
-                </div>
-              </div>
-            </div>
+            <button onClick={() => setPreview(borangBDocument(labels.withNames(selected)))} className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-[var(--border-hairline)] text-sm"><Printer size={15} />Preview / Print Report</button>
+            <ReportTables sections={borangBDocument(labels.withNames(selected)).sections} />
           </div>
         </div>
       )}

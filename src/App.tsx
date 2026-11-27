@@ -1,3 +1,6 @@
+import { PrivacyPolicyPage } from './pages/PrivacyPolicyPage';
+import { AccountDeletionPage } from './pages/AccountDeletionPage';
+import type { MissionReportContext } from './components/MissionReportingDashboard';
 import { useEffect, useState } from 'react';
 import { AuthGate } from './components/AuthGate';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -41,6 +44,7 @@ const ROUTE_META: Record<
   'appointments-todos': { title: 'Appointments & To-Do List', breadcrumb: 'Schedule / Appointments & Tasks' },
   departments: { title: 'Church Departments', breadcrumb: 'Schedule / Departments' },
   'resources-settings': { title: 'Mission Resource Library', breadcrumb: 'Schedule & Resources / Library' },
+  'admin-department-forms': { title: 'Department Report Forms', breadcrumb: 'Administration / Report Form Builder' },
   'admin-console': { title: 'Admin Console & Hierarchy', breadcrumb: 'Administration / Admin Console' },
   'admin-hierarchy': { title: 'Mission & Church Hierarchy', breadcrumb: 'Administration / Hierarchy' },
   'admin-users': { title: 'Staff Directory, Requests & Audit', breadcrumb: 'Administration / Staff & Audit' },
@@ -52,7 +56,12 @@ const SIDEBAR_MODE_KEY = 'pastor_report_sidebar_compact';
 
 function WorkspaceRouter() {
   const { firebaseUser, profile, loading, authError, signOut } = useAuth();
+  const [reportContext, setReportContext] = useState<MissionReportContext | undefined>();
   const [route, setRoute] = useState<NavRouteId>('overview');
+  const navigate = (next: NavRouteId, context?: MissionReportContext) => {
+    if (next === route) return;
+    if (window.dispatchEvent(new CustomEvent('pastorpro:before-navigate', { cancelable: true }))) { setReportContext(context); setRoute(next); }
+  };
   const [sidebarCompact, setSidebarCompact] = useState<boolean>(() => {
     try {
       return localStorage.getItem(SIDEBAR_MODE_KEY) === 'true';
@@ -97,7 +106,9 @@ function WorkspaceRouter() {
 
   const isSuperAdmin = profile.userRole === 'super_admin';
 
-  if (!isSuperAdmin && profile.approvalStatus === 'pending') {
+  if (profile.deletionPending) return <div className="min-h-screen flex items-center justify-center p-6"><div className="max-w-md space-y-4"><h1 className="text-xl font-semibold">Account deletion is processing</h1><p>Your workspace access is closed while your deletion request is processed.</p><a href="/account-deletion" className="underline">Account deletion information</a><button className="block underline" onClick={signOut}>Sign out</button></div></div>;
+
+  if (profile.approvalStatus === 'pending') {
     return (
       <div className="min-h-screen flex items-center justify-center p-6 bg-[var(--bg-canvas)] text-[var(--text-primary)]">
         <div className="max-w-lg w-full rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-8 space-y-5">
@@ -115,6 +126,7 @@ function WorkspaceRouter() {
           <div className="p-4 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-subtle)] text-xs text-[var(--text-secondary)]">
             Once an administrator approves your account in the Admin Console, this screen will unlock automatically.
           </div>
+          <a href="/account-deletion" className="text-xs underline">Privacy and account deletion</a>
           <div className="flex justify-end">
             <button
               type="button"
@@ -129,7 +141,7 @@ function WorkspaceRouter() {
     );
   }
 
-  if (!isSuperAdmin && (profile.approvalStatus === 'rejected' || !profile.isActive)) {
+  if (profile.approvalStatus === 'rejected' || !profile.isActive) {
     return (
       <div className="min-h-screen flex items-center justify-center p-6 bg-[var(--bg-canvas)] text-[var(--text-primary)]">
         <div className="max-w-md w-full rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-8 space-y-4">
@@ -149,6 +161,7 @@ function WorkspaceRouter() {
               Note: {profile.approvalNote}
             </div>
           )}
+          <a href="/account-deletion" className="block text-xs underline">Privacy and account deletion</a>
           <button
             type="button"
             onClick={signOut}
@@ -175,7 +188,7 @@ function WorkspaceRouter() {
   return (
     <WorkspaceShell
       activeRoute={route}
-      onNavigate={setRoute}
+      onNavigate={navigate}
       pageTitle={meta.title}
       breadcrumb={meta.breadcrumb}
       sidebarCompact={sidebarCompact}
@@ -186,19 +199,20 @@ function WorkspaceRouter() {
           {authError}
         </div>
       )}
-      {route === 'overview' && <DashboardOverview onNavigate={setRoute} />}
-      {route === 'my-mission' && <MyMissionPage onNavigate={setRoute} />}
-      {route === 'my-ministry' && <MyMinistryPage onNavigate={setRoute} />}
+      {route === 'overview' && <DashboardOverview onNavigate={navigate} />}
+      {route === 'my-mission' && <MyMissionPage onNavigate={navigate} onReportNavigate={(next, context) => { navigate(next, context); }} />}
+      {route === 'my-ministry' && <MyMinistryPage onNavigate={navigate} />}
       {route === 'activities' && <ActivitiesPage />}
-      {route === 'borang-b' && <BorangBPage />}
+      {route === 'borang-b' && <BorangBPage initialContext={reportContext} />}
       {route === 'all-borang-b' && <AllBorangBPage />}
-      {route === 'financial-reports' && <FinancialReportsPage />}
-      {route === 'quarterly-departments' && <QuarterlyDepartmentsPage />}
+      {route === 'financial-reports' && <FinancialReportsPage initialContext={reportContext} />}
+      {route === 'quarterly-departments' && <QuarterlyDepartmentsPage onManage={() => navigate('admin-department-forms')} />}
       {route === 'calendar' && <CalendarEventsPage />}
       {route === 'appointments-todos' && <AppointmentsTodosPage />}
       {route === 'departments' && <DepartmentsPage />}
       {route === 'resources-settings' && <ResourcesSettingsPage />}
-      {route === 'admin-console' && <AdminManagementPage />}
+      {route === 'admin-console' && <AdminManagementPage onManageDepartmentForms={() => navigate('admin-department-forms')} />}
+      {route === 'admin-department-forms' && <QuarterlyDepartmentsPage adminMode />}
       {route === 'admin-hierarchy' && <AdminHierarchyPage />}
       {route === 'admin-users' && <AdminStaffUsersPage />}
       {route === 'profile' && <ProfilePage />}
@@ -213,15 +227,14 @@ function WorkspaceRouter() {
 }
 
 export default function App() {
+  const path = window.location.pathname.replace(/\/$/, '');
   return (
     <ErrorBoundary>
       <ThemeProvider>
         <ToastProvider>
-          <AuthProvider>
-            <MissionProvider>
-              <WorkspaceRouter />
-            </MissionProvider>
-          </AuthProvider>
+          {path === '/privacy-policy' ? <PrivacyPolicyPage /> : <AuthProvider>
+            {path === '/account-deletion' ? <AccountDeletionPage /> : <MissionProvider><WorkspaceRouter /></MissionProvider>}
+          </AuthProvider>}
         </ToastProvider>
       </ThemeProvider>
     </ErrorBoundary>

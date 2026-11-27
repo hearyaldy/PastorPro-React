@@ -1,0 +1,9 @@
+{
+  "project": "pastor-report-e4c52",
+  "release": "projects/pastor-report-e4c52/releases/cloud.firestore",
+  "rulesetName": "projects/pastor-report-e4c52/rulesets/f1e16d2e-012f-4eb7-b3fb-45a808fd249d",
+  "releaseUpdateTime": "2026-11-27T13:12:20.416268Z",
+  "verifiedSha256": "f934798fa8212c6dec375d3cd2865562e0300d58454aadc42ca631ab3ea33922",
+  "verifiedAt": "2026-11-27T13:12:45.382Z",
+  "unionRulePresent": true
+}

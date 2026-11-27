@@ -22,12 +22,12 @@ import {
   OperationType,
   testConnection,
 } from '../lib/firebase';
+import { readUserProfile } from '../lib/userProfiles';
 import {
   getCapabilities,
-  normalizeUserRole,
+  storedUserRole,
   ROLE_META,
   type RoleCapabilities,
-  type UserApprovalStatus,
   type UserProfile,
   type UserRole,
 } from '../types';
@@ -64,24 +64,6 @@ function setLocalOnboardingBypass(uid: string) {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
-function buildFallbackSuperAdminProfile(fbUser: FirebaseUser): UserProfile {
-  return {
-    uid: fbUser.uid,
-    email: fbUser.email || BOOTSTRAPPED_ADMIN_EMAIL,
-    displayName: fbUser.displayName || fbUser.email || 'Super Admin',
-    photoURL: fbUser.photoURL || '',
-    userRole: 'super_admin',
-    role: 'super_admin',
-    roleTitle: ROLE_META.super_admin.label,
-    isAdmin: true,
-    level: ROLE_META.super_admin.level,
-    isPremium: true,
-    isActive: true,
-    approvalStatus: 'approved',
-    onboardingCompleted: true,
-  };
-}
-
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -102,6 +84,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         unsubProfile = null;
       }
 
+      setProfile(null);
       setFirebaseUser(fbUser);
       setAuthError(null);
 
@@ -111,8 +94,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
+      if (!fbUser.emailVerified) {
+        setAuthError('Please verify your email address before signing in.');
+        setLoading(false);
+        return;
+      }
+
       const isBootstrapEmail =
-        fbUser.email?.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL;
+        fbUser.emailVerified && fbUser.email?.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL;
 
       setLoading(true);
       const userRef = doc(db, 'users', fbUser.uid);
@@ -120,6 +109,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       unsubProfile = onSnapshot(
         userRef,
         async (snap) => {
+          if (auth.currentUser?.uid !== fbUser.uid) return;
           if (!snap.exists()) {
             const isBootstrapAdmin = isBootstrapEmail;
             const initialRole: UserRole = isBootstrapAdmin
@@ -130,13 +120,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               email: fbUser.email || '',
               displayName: fbUser.displayName || fbUser.email || 'Pastor User',
               photoURL: fbUser.photoURL || '',
-              userRole: initialRole,
+              userRole: storedUserRole(initialRole),
               role: initialRole,
               roleTitle: ROLE_META[initialRole].label,
               isAdmin: isBootstrapAdmin,
               level: ROLE_META[initialRole].level,
               isPremium: false,
               isActive: isBootstrapAdmin,
+              isApproved: isBootstrapAdmin,
               approvalStatus: isBootstrapAdmin ? 'approved' : 'pending',
               onboardingCompleted: isBootstrapAdmin,
               createdAt: serverTimestamp(),
@@ -145,12 +136,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             try {
               await setDoc(userRef, newProfile);
             } catch (err) {
-              if (isBootstrapAdmin) {
-                console.warn('Firestore profile create blocked; activating Super Admin bypass session.', err);
-                setProfile(buildFallbackSuperAdminProfile(fbUser));
-                setLoading(false);
-                return;
-              }
               setAuthError(
                 err instanceof Error
                   ? err.message
@@ -162,94 +147,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           }
 
           const raw = snap.data() as Record<string, unknown>;
-          const normalized = normalizeUserRole(raw);
-          const resolvedRole: UserRole =
-            isBootstrapEmail || normalized === 'super_admin'
-              ? 'super_admin'
-              : normalized;
-          const isSuperAdminAccount = resolvedRole === 'super_admin' || isBootstrapEmail;
-
-          const rawApproval = String(raw.approvalStatus || '');
-          const approvalStatus: UserApprovalStatus = isSuperAdminAccount
-            ? 'approved'
-            : rawApproval === 'pending' ||
-                rawApproval === 'approved' ||
-                rawApproval === 'rejected'
-              ? rawApproval
-              : raw.isActive === false
-                ? 'rejected'
-                : 'approved';
-
-          const isAdminAccount =
-            isSuperAdminAccount ||
-            resolvedRole === 'admin' ||
-            Boolean(raw.isAdmin) ||
-            Boolean(raw.isSuperAdmin);
-          const localBypass = getLocalOnboardingBypass(fbUser.uid);
-
+          const nextProfile = readUserProfile(fbUser.uid, raw);
           setProfile({
-            uid: String(raw.uid || fbUser.uid),
-            email: String(raw.email || fbUser.email || ''),
-            displayName: String(
-              raw.displayName || fbUser.displayName || 'Pastor User',
-            ),
-            photoURL: raw.photoURL ? String(raw.photoURL) : fbUser.photoURL || '',
-            phone: raw.phone ? String(raw.phone) : '',
-            userRole: resolvedRole,
-            role: raw.role ? String(raw.role) : resolvedRole,
-            roleTitle: raw.roleTitle
-              ? String(raw.roleTitle)
-              : ROLE_META[resolvedRole].label,
-            isAdmin: isSuperAdminAccount || Boolean(raw.isAdmin),
-            level: isSuperAdminAccount
-              ? ROLE_META.super_admin.level
-              : typeof raw.level === 'number'
-                ? raw.level
-                : ROLE_META[resolvedRole].level,
-            unionId: raw.unionId ? String(raw.unionId) : '',
-            unionName: raw.unionName ? String(raw.unionName) : '',
-            missionId: raw.missionId
-              ? String(raw.missionId)
-              : raw.mission
-                ? String(raw.mission)
-                : '',
-            missionName: raw.missionName ? String(raw.missionName) : '',
-            regionId: raw.regionId ? String(raw.regionId) : '',
-            regionName: raw.regionName ? String(raw.regionName) : '',
-            districtId: raw.districtId
-              ? String(raw.districtId)
-              : raw.district
-                ? String(raw.district)
-                : '',
-            districtName: raw.districtName ? String(raw.districtName) : '',
-            churchId: raw.churchId ? String(raw.churchId) : '',
-            churchName: raw.churchName ? String(raw.churchName) : '',
-            isPremium: isSuperAdminAccount || Boolean(raw.isPremium),
-            isActive: isSuperAdminAccount || (raw.isActive !== false && approvalStatus === 'approved'),
-            approvalStatus,
-            approvedBy: raw.approvedBy ? String(raw.approvedBy) : '',
-            approvalNote: raw.approvalNote ? String(raw.approvalNote) : '',
+            ...nextProfile,
+            email: nextProfile.email || fbUser.email || '',
+            photoURL: String(raw.photoURL || fbUser.photoURL || ''),
+            isActive: fbUser.emailVerified && nextProfile.isActive,
             onboardingCompleted:
-              isAdminAccount || localBypass || Boolean(raw.onboardingCompleted),
-            createdAt: raw.createdAt,
-            updatedAt: raw.updatedAt,
+              nextProfile.isAdmin || getLocalOnboardingBypass(fbUser.uid) || nextProfile.onboardingCompleted,
           });
           setLoading(false);
         },
         (err) => {
+          if (auth.currentUser?.uid !== fbUser.uid) return;
           console.warn('Firestore user profile read failed:', err);
-          if (isBootstrapEmail) {
-            setProfile(buildFallbackSuperAdminProfile(fbUser));
-            setAuthError(
-              'Signed in with Super Admin bypass. Deploy firestore.rules to your Firebase project so profile and database writes persist.',
-            );
-          } else {
-            setAuthError(
-              err instanceof Error
-                ? err.message
-                : 'Permission denied reading user profile from Firestore.',
-            );
-          }
+          setProfile(null);
+          setAuthError(
+            err instanceof Error ? err.message : 'Permission denied reading user profile from Firestore.',
+          );
           setLoading(false);
         },
       );
@@ -318,6 +233,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         payload[key] = updates[key];
       }
     }
+
+    if ('missionId' in payload) payload.mission = payload.missionId;
+    if ('districtId' in payload) payload.district = payload.districtId;
+    if ('regionId' in payload) payload.region = payload.regionId;
 
     try {
       await updateDoc(doc(db, 'users', firebaseUser.uid), payload);

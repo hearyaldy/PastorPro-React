@@ -1,3 +1,4 @@
+import { useHierarchyLabels } from '../hooks/useHierarchyLabels';
 import React, { useState } from 'react';
 import {
   addDoc,
@@ -15,6 +16,7 @@ import { bootstrapSabahMissionBaseline } from '../lib/seedData';
 import { useToast } from '../components/Toast';
 
 export function AdminHierarchyPage() {
+  const labels = useHierarchyLabels();
   const { profile, capabilities } = useAuth();
   const { missions, regions, districts, churches, logAdminActivity } = useMission();
   const { notify } = useToast();
@@ -336,7 +338,7 @@ export function AdminHierarchyPage() {
                   <tr key={r.id}>
                     <td className="py-3 px-4 font-medium">{r.name}</td>
                     <td className="py-3 px-4 text-xs text-[var(--text-secondary)]">
-                      {missions.find((m) => m.id === r.missionId)?.name || r.missionId}
+                      {labels.mission(r.missionId)}
                     </td>
                     <td className="py-3 px-4 text-right">
                       <button
@@ -425,7 +427,7 @@ export function AdminHierarchyPage() {
                   <tr key={d.id}>
                     <td className="py-3 px-4 font-medium">{d.name}</td>
                     <td className="py-3 px-4 text-xs text-[var(--text-secondary)]">
-                      {regions.find((r) => r.id === d.regionId)?.name || d.regionId}
+                      {labels.region(d.regionId)}
                     </td>
                     <td className="py-3 px-4">
                       <input
@@ -527,10 +529,10 @@ export function AdminHierarchyPage() {
                     <tr key={c.id} className="hover:bg-[var(--bg-subtle)]/60">
                       <td className="py-3 px-4 font-medium">{c.name}</td>
                       <td className="py-3 px-4 text-xs text-[var(--text-secondary)]">
-                        {districts.find((d) => d.id === c.districtId)?.name || c.districtId}
+                        {labels.district(c.districtId)}
                       </td>
                       <td className="py-3 px-4 text-xs text-[var(--text-secondary)]">
-                        {regions.find((r) => r.id === c.regionId)?.name || c.regionId}
+                        {labels.region(c.regionId)}
                       </td>
                       <td className="py-3 px-4 text-right font-mono-tabular">
                         {c.memberCount ?? 0}

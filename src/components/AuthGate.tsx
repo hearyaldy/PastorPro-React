@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { LandingHomeLink } from './LandingHomeLink';
 import {
   ArrowRight,
   BookOpen,
@@ -52,11 +53,12 @@ export function AuthGate() {
 
   return (
     <div className="min-h-screen bg-[var(--bg-canvas)] text-[var(--text-primary)] flex flex-col">
-      <header className="flex items-center justify-between gap-6 px-6 md:px-10 py-4 border-b border-[var(--border-hairline)] bg-[var(--bg-header)]">
+      <header className="flex flex-wrap items-center justify-between gap-4 px-6 md:px-10 py-4 border-b border-[var(--border-hairline)] bg-[var(--bg-header)]">
         <div className="text-lg font-display font-semibold tracking-tight whitespace-nowrap shrink-0">
           PastorPro
         </div>
-        <div className="flex items-center gap-3 shrink-0">
+        <div className="flex flex-wrap items-center gap-3">
+          <LandingHomeLink />
           <div className="hidden sm:flex items-center gap-1.5 pr-1">
             {LIGHT_THEME_PRESETS.map((preset) => {
               const selected = theme === 'light' && lightTheme === preset.id;
@@ -226,6 +228,7 @@ export function AuthGate() {
           </div>
         </section>
       </main>
+      <footer className="flex flex-wrap justify-center gap-6 p-5 text-xs text-[var(--text-secondary)]"><a className="underline" href="/privacy-policy">Privacy policy</a><a className="underline" href="/account-deletion">Account deletion</a></footer>
     </div>
   );
 }

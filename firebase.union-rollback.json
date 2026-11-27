@@ -1,0 +1,3 @@
+{
+  "firestore": { "rules": "firebase/union-hotfix/deployed-before.rules" }
+}

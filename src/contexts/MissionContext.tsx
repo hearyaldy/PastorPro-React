@@ -1,3 +1,4 @@
+import { readChurch, readDistrict, readMission, readRegion, readStaff } from '../lib/hierarchyViews';
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import {
   addDoc,
@@ -8,6 +9,7 @@ import {
   serverTimestamp,
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { missionQuery } from '../lib/queryScope';
 import { useAuth } from './AuthContext';
 import type {
   Church,
@@ -43,7 +45,7 @@ interface MissionContextValue {
 const MissionContext = createContext<MissionContextValue | undefined>(undefined);
 
 export function MissionProvider({ children }: { children: React.ReactNode }) {
-  const { firebaseUser } = useAuth();
+  const { firebaseUser, profile } = useAuth();
   const [unions, setUnions] = useState<Union[]>([]);
   const [missions, setMissions] = useState<Mission[]>([]);
   const [regions, setRegions] = useState<Region[]>([]);
@@ -56,7 +58,7 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
   const [loadingHierarchy, setLoadingHierarchy] = useState(true);
 
   useEffect(() => {
-    if (!firebaseUser) {
+    if (!firebaseUser || !profile) {
       setUnions([]);
       setMissions([]);
       setRegions([]);
@@ -70,6 +72,8 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
+    setGlobalEvents([]);
+    setResources([]);
     setLoadingHierarchy(true);
 
     const safeListenError = (col: string, err: unknown, isMissionLoad = false) => {
@@ -91,7 +95,7 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
         query(collection(db, 'missions'), orderBy('name', 'asc')),
         (snap) => {
           setMissions(
-            snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Mission, 'id'>) })),
+            snap.docs.map((d) => readMission(d.id, d.data())).sort((a, b) => a.name.localeCompare(b.name)),
           );
           setLoadingHierarchy(false);
         },
@@ -101,7 +105,7 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
         query(collection(db, 'regions'), orderBy('name', 'asc')),
         (snap) => {
           setRegions(
-            snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Region, 'id'>) })),
+            snap.docs.map((d) => readRegion(d.id, d.data())).sort((a, b) => a.name.localeCompare(b.name)),
           );
         },
         (err) => safeListenError('regions', err),
@@ -110,16 +114,16 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
         query(collection(db, 'districts'), orderBy('name', 'asc')),
         (snap) => {
           setDistricts(
-            snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<District, 'id'>) })),
+            snap.docs.map((d) => readDistrict(d.id, d.data())).sort((a, b) => a.name.localeCompare(b.name)),
           );
         },
         (err) => safeListenError('districts', err),
       ),
       onSnapshot(
-        query(collection(db, 'churches'), orderBy('name', 'asc')),
+        collection(db, 'churches'),
         (snap) => {
           setChurches(
-            snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Church, 'id'>) })),
+            snap.docs.map((d) => readChurch(d.id, d.data())).sort((a, b) => a.name.localeCompare(b.name)),
           );
         },
         (err) => safeListenError('churches', err),
@@ -134,16 +138,16 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
         (err) => safeListenError('departments', err),
       ),
       onSnapshot(
-        query(collection(db, 'staff'), orderBy('fullName', 'asc')),
+        collection(db, 'staff'),
         (snap) => {
           setStaff(
-            snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<StaffMember, 'id'>) })),
+            snap.docs.map((d) => readStaff(d.id, d.data())).sort((a, b) => a.fullName.localeCompare(b.fullName)),
           );
         },
         (err) => safeListenError('staff', err),
       ),
-      onSnapshot(
-        query(collection(db, 'global_events'), orderBy('startDate', 'asc')),
+      ...(profile.isActive ? [onSnapshot(
+        missionQuery(db, 'global_events', profile),
         (snap) => {
           setGlobalEvents(
             snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<GlobalEvent, 'id'>) })),
@@ -152,20 +156,20 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
         (err) => safeListenError('global_events', err),
       ),
       onSnapshot(
-        query(collection(db, 'resources'), orderBy('title', 'asc')),
+        missionQuery(db, 'resources', profile),
         (snap) => {
           setResources(
             snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<MissionResource, 'id'>) })),
           );
         },
         (err) => safeListenError('resources', err),
-      ),
+      )] : []),
     ];
 
     return () => {
       unsubs.forEach((u) => u());
     };
-  }, [firebaseUser]);
+  }, [firebaseUser, profile]);
 
   const logAdminActivity = async (
     action: string,
@@ -176,6 +180,7 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
     if (!firebaseUser) return;
     try {
       await addDoc(collection(db, 'admin_activity'), {
+        missionId: profile?.missionId || '',
         actorId: firebaseUser.uid,
         actorName: firebaseUser.displayName || firebaseUser.email || 'Admin',
         action: action.slice(0, 120),

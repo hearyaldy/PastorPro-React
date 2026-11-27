@@ -78,6 +78,7 @@ export function OnboardingWizard() {
       await updateOwnProfile({
         displayName: displayName.trim().slice(0, 120),
         phone: phone.trim().slice(0, 40),
+        ...(profile?.userRole === 'user' ? {
         unionId: mission?.unionId || '',
         unionName: mission?.unionName || '',
         missionId: mission?.id || '',
@@ -88,6 +89,7 @@ export function OnboardingWizard() {
         districtName: district?.name || '',
         churchId: church?.id || '',
         churchName: church?.name || '',
+        } : {}),
         onboardingCompleted: true,
       });
       notify('Onboarding completed. Welcome to PastorPro.', 'success');
@@ -116,6 +118,7 @@ export function OnboardingWizard() {
       await addDoc(collection(db, 'locationRequests'), {
         userId: profile.uid,
         requestedBy: profile.uid,
+        missionId: profile.missionId || '',
         userName: displayName.trim() || profile.displayName,
         userEmail: profile.email,
         missionName:

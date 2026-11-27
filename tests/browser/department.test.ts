@@ -1,0 +1,70 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { chromium } from 'playwright-core';
+test('Google Forms style respondent flow validates sections, retains failed answers and confirms successful submission', async () => {
+  const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1360, height: 1000 } });
+    const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
+    await page.goto(`${process.env.REPORT_TEST_ORIGIN || 'http://127.0.0.1:3000'}/tests/fixtures/department.html`);
+    await page.getByLabel('Simulate save failure').check();
+    await page.getByRole('button', { name: 'Open sample form' }).click();
+    await page.getByRole('button', { name: 'Next', exact: true }).click();
+    assert.ok(await page.getByText('This question is required.', { exact: true }).count() >= 2);
+    await page.getByLabel('Report prepared by', { exact: false }).fill('Pastor Sample');
+    await page.getByLabel('Meetings held', { exact: false }).fill('0');
+    await page.getByLabel('Ministry focus', { exact: false }).selectOption('Outreach');
+    await page.getByRole('button', { name: 'Next', exact: true }).click();
+    await page.getByRole('heading', { name: 'Quarterly giving' }).waitFor();
+    await page.getByLabel('Special offering', { exact: false }).fill('12.50');
+    await page.getByLabel('Visitations', { exact: false }).nth(0).fill('2');
+    await page.getByLabel('Visitations', { exact: false }).nth(1).fill('3');
+    await page.getByRole('button', { name: 'Submit', exact: true }).click();
+    assert.ok(await page.getByText('Save denied for this sample account.', { exact: false }).isVisible());
+    assert.equal(await page.getByLabel('Special offering', { exact: false }).inputValue(), '12.50');
+    page.on('dialog', dialog => dialog.accept());
+    await page.getByRole('button', { name: 'Back to reports', exact: false }).click();
+    await page.getByLabel('Simulate save failure').uncheck();
+    await page.getByRole('button', { name: 'Open sample form' }).click();
+    await page.getByLabel('Report prepared by', { exact: false }).fill('Pastor Sample');
+    await page.getByLabel('Meetings held', { exact: false }).fill('4');
+    await page.getByLabel('Ministry focus', { exact: false }).selectOption('Discipleship');
+    await page.screenshot({ path: '/private/tmp/pastorpro-department-form-desktop.png', fullPage: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    await page.screenshot({ path: '/private/tmp/pastorpro-department-form-mobile.png' });
+    await page.getByRole('button', { name: 'Next', exact: true }).click();
+    await page.getByLabel('Special offering', { exact: false }).fill('20');
+    await page.getByLabel('Visitations', { exact: false }).nth(0).fill('1'); await page.getByLabel('Visitations', { exact: false }).nth(1).fill('2');
+    await page.getByRole('button', { name: 'Submit', exact: true }).click();
+    await page.getByRole('heading', { name: 'Your response has been recorded' }).waitFor();
+    assert.ok((await page.getByLabel('Saved form data').textContent())?.includes('Pastor Sample'));
+    assert.deepEqual(errors, []);
+  } finally { await browser.close(); }
+});
+test('admin builder edits question types and choices, previews sections, and saves the form', async () => {
+  const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1360, height: 1000 } });
+    await page.goto(`${process.env.REPORT_TEST_ORIGIN || 'http://127.0.0.1:3000'}/tests/fixtures/department.html`);
+    await page.getByRole('button', { name: 'Open builder' }).click();
+    await page.getByLabel('Form title', { exact: true }).fill('Updated ministry form');
+    await page.getByRole('button', { name: 'Add question', exact: true }).first().click();
+    const added = page.getByLabel('Question title', { exact: true }).nth(4);
+    await added.fill('Attendance category');
+    await page.getByLabel('Question type', { exact: true }).nth(4).selectOption('dropdown');
+    await page.getByLabel('Dropdown choices', { exact: true }).nth(1).fill('Small\nLarge');
+    await page.screenshot({ path: '/private/tmp/pastorpro-department-builder-desktop.png', fullPage: true });
+    await page.getByRole('button', { name: 'Preview form', exact: true }).click();
+    await page.getByRole('heading', { name: 'Updated ministry form' }).waitFor();
+    assert.ok(await page.getByLabel('Attendance category', { exact: false }).isVisible());
+    await page.getByRole('button', { name: 'Back to editor', exact: false }).click();
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    await page.screenshot({ path: '/private/tmp/pastorpro-department-builder-mobile.png' });
+    await page.getByRole('button', { name: 'Save form', exact: true }).click();
+    await page.getByRole('heading', { name: 'Department form workspace' }).waitFor();
+    const saved = JSON.parse((await page.getByLabel('Saved form data').textContent())!);
+    assert.equal(saved.name, 'Updated ministry form'); assert.deepEqual(saved.steps[0].fields[4].options, ['Small', 'Large']);
+  } finally { await browser.close(); }
+});

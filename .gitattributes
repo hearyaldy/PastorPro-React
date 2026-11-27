@@ -1,0 +1,3 @@
+# Preserve exact Firebase release snapshots/candidates for recorded hash checks.
+firebase/union-hotfix/*.rules -whitespace
+firebase/account-deletion/*.rules -whitespace

@@ -1,0 +1,6 @@
+{
+  "projectId": "pastor-report-e4c52",
+  "baselineSHA256": "a8f3b258df9c6f1dca20604ac11c05b3394e0513605e901a245eb005a47ccecf",
+  "candidateSHA256": "3f84e2b96eb707644d47656474e243329e34bc94acc1bf99938458e6700adfd6",
+  "change": "Only isAuthenticated gains a deletion-job existence guard; all other deployed permissions are preserved."
+}

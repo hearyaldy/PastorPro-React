@@ -1,3 +1,5 @@
+import type { BorangBForm } from '../lib/borangB';
+
 export type UserRole =
   | 'super_admin'
   | 'admin'
@@ -69,6 +71,7 @@ export const ROLE_META: Record<
 export type UserApprovalStatus = 'pending' | 'approved' | 'rejected';
 
 export interface UserProfile {
+  deletionPending?: boolean;
   uid: string;
   email: string;
   displayName: string;
@@ -119,7 +122,7 @@ export interface RoleCapabilities {
 function resolveSingleRoleCandidate(value: unknown): UserRole | null {
   const candidate = String(value || '').toLowerCase().trim();
   if (!candidate) return null;
-  if (candidate in ROLE_META) {
+  if (Object.hasOwn(ROLE_META, candidate)) {
     return candidate as UserRole;
   }
   const compact = candidate.replace(/[\s_-]+/g, '');
@@ -131,36 +134,21 @@ function resolveSingleRoleCandidate(value: unknown): UserRole | null {
   return null;
 }
 
+// Only the authoritative field grants capabilities. Display titles and flags are metadata.
 export function normalizeUserRole(raw: Record<string, unknown>): UserRole {
-  if (raw.isSuperAdmin === true || raw.superAdmin === true) {
-    return 'super_admin';
-  }
+  return resolveSingleRoleCandidate(raw.userRole) || 'user';
+}
 
-  const candidates = [raw.userRole, raw.role, raw.userType, raw.accountType]
-    .map(resolveSingleRoleCandidate)
-    .filter((r): r is UserRole => r !== null);
-
-  if (candidates.includes('super_admin')) {
-    return 'super_admin';
-  }
-  const highestNonDefault = candidates.find((r) => r !== 'user');
-  if (highestNonDefault) {
-    return highestNonDefault;
-  }
-  if (candidates.length > 0) {
-    return candidates[0];
-  }
-
-  const title = String(raw.roleTitle || '').toLowerCase();
-  if (title.includes('super')) return 'super_admin';
-  if (raw.isAdmin === true || title.includes('admin')) return 'admin';
-  if (title.includes('ministerial')) return 'ministerial_secretary';
-  if (title.includes('director')) return 'director';
-  if (title.includes('officer')) return 'officer';
-  if (title.includes('editor')) return 'editor';
-  if (title.includes('district')) return 'district_pastor';
-  if (title.includes('treasurer')) return 'church_treasurer';
-  return 'user';
+/** Flutter's UserRole.name encoding, used for all new role writes. */
+export function storedUserRole(role: UserRole): string {
+  const names: Partial<Record<UserRole, string>> = {
+    super_admin: 'superAdmin',
+    mission_admin: 'missionAdmin',
+    ministerial_secretary: 'ministerialSecretary',
+    district_pastor: 'districtPastor',
+    church_treasurer: 'churchTreasurer',
+  };
+  return names[role] || role;
 }
 
 export function getCapabilities(user: UserProfile | null): RoleCapabilities {
@@ -323,6 +311,7 @@ export interface PastoralActivity {
   category: ActivityCategory;
   date: string;
   durationMinutes: number;
+  mileage: number;
   participants?: number;
   location?: string;
   notes?: string;
@@ -330,7 +319,7 @@ export interface PastoralActivity {
   updatedAt?: unknown;
 }
 
-export interface BorangBReport {
+export interface BorangBReport extends BorangBForm {
   id: string;
   userId: string;
   pastorName: string;
@@ -338,6 +327,9 @@ export interface BorangBReport {
   regionId?: string;
   districtId: string;
   districtName?: string;
+  churchId?: string;
+  sourceData?: Record<string, unknown>;
+  revision?: string;
   year: number;
   month: number;
   status: 'draft' | 'submitted';
@@ -352,8 +344,8 @@ export interface BorangBReport {
   boardMeetings: number;
   communionServices: number;
   anointings?: number;
-  weddings?: number;
-  funerals?: number;
+  weddings: number;
+  funerals: number;
   childDedications?: number;
   titheFaithfulnessNotes?: string;
   challengesAndPrayer?: string;
@@ -371,6 +363,10 @@ export interface FinancialReportHistory {
 }
 
 export interface FinancialReport {
+  sourceData?: Record<string, unknown>;
+  offerings?: number;
+  specialOfferings?: number;
+  customFinanceTypes?: { name?: string; amount?: number }[];
   id: string;
   missionId: string;
   regionId: string;
@@ -469,6 +465,7 @@ export interface WanitaPayload {
 }
 
 export interface QuarterlyDepartmentReport {
+  sourceData?: Record<string, unknown>;
   id: string;
   missionId: string;
   regionId: string;
@@ -476,7 +473,13 @@ export interface QuarterlyDepartmentReport {
   churchId: string;
   churchName: string;
   districtName?: string;
-  department: DepartmentType;
+  department: string;
+  templateId?: string;
+  departmentKey?: string;
+  departmentName?: string;
+  values?: Record<string, unknown>;
+  submittedAt?: unknown;
+  editedBy?: string;
   year: number;
   quarter: 1 | 2 | 3 | 4;
   submittedBy: string;

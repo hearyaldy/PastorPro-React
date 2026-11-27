@@ -1,3 +1,9 @@
+import { useHierarchyLabels } from '../hooks/useHierarchyLabels';
+import { StatisticsCards } from '../components/StatisticsCards';
+import { ReportPreview } from '../components/ReportPreview';
+import type { PrintableReport } from '../lib/pdfReport';
+import { readBorangB } from '../lib/borangB';
+import { readActivity } from '../lib/activities';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   addDoc,
@@ -53,10 +59,12 @@ export function MyMinistryPage({
 }: {
   onNavigate: (route: NavRouteId) => void;
 }) {
+  const labels = useHierarchyLabels();
   const { profile } = useAuth();
   const { missions, districts, churches } = useMission();
   const { notify } = useToast();
 
+  const [preview, setPreview] = useState<PrintableReport | null>(null);
   const [tab, setTab] = useState<'team' | 'churches' | 'summary'>('team');
   const [team, setTeam] = useState<MinistryTeamMember[]>([]);
   const [loadingTeam, setLoadingTeam] = useState(true);
@@ -114,10 +122,7 @@ export function MyMinistryPage({
         ),
         (snap) => {
           const items = snap.docs
-            .map((d) => ({
-              id: d.id,
-              ...(d.data() as Omit<PastoralActivity, 'id'>),
-            }))
+            .map((d) => readActivity(d.id, d.data()))
             .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
           setRecentActivities(items);
         },
@@ -132,10 +137,8 @@ export function MyMinistryPage({
         ),
         (snap) => {
           const match = snap.docs
-            .map((d) => ({
-              id: d.id,
-              ...(d.data() as Omit<BorangBReport, 'id'>),
-            }))
+            .map((d) => readBorangB(d.id, d.data()))
+            .filter((item): item is BorangBReport => item !== null)
             .find((r) => r.year === currentYear && r.month === currentMonth);
           setCurrentBorangB(match || null);
         },
@@ -291,15 +294,15 @@ export function MyMinistryPage({
       <div className="border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] p-6 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div className="space-y-1">
           <div className="text-xs text-[var(--text-muted)]">
-            {profile?.missionName || 'Mission Unassigned'} ·{' '}
-            {profile?.regionName || 'Region Unassigned'}
+            {labels.mission(profile?.missionId, profile?.missionName)} ·{' '}
+            {labels.region(profile?.regionId, profile?.regionName)}
           </div>
           <h2 className="text-xl font-display font-semibold tracking-tight">
             {myDistrict ? `${myDistrict.name} Ministry` : 'My Pastoral Ministry'}
           </h2>
           <p className="text-xs text-[var(--text-secondary)]">
-            {profile?.churchName
-              ? `Primary Church: ${profile.churchName}`
+            {(profile?.churchId || profile?.churchName)
+              ? `Primary Church: ${labels.church(profile.churchId, profile.churchName)}`
               : 'Manage your local church elders, ministry leaders, and assigned congregations.'}
           </p>
         </div>
@@ -323,39 +326,19 @@ export function MyMinistryPage({
         </div>
       </div>
 
-      {/* 4-Column KPI Strip */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] divide-y sm:divide-y-0 sm:divide-x divide-[var(--border-hairline)]">
-        <div className="px-5 py-4">
-          <div className="text-xs text-[var(--text-muted)]">Assigned Churches</div>
-          <div className="text-xl font-mono-tabular font-semibold mt-1">
-            {districtChurches.length}
-          </div>
-        </div>
-        <div className="px-5 py-4">
-          <div className="text-xs text-[var(--text-muted)]">District Membership</div>
-          <div className="text-xl font-mono-tabular font-semibold mt-1">
-            {totalDistrictMembers.toLocaleString()}
-          </div>
-        </div>
-        <div className="px-5 py-4">
-          <div className="text-xs text-[var(--text-muted)]">Elders & Ministry Team</div>
-          <div className="text-xl font-mono-tabular font-semibold mt-1">
-            {elderCount} Elders · {team.length} Total
-          </div>
-        </div>
-        <div className="px-5 py-4">
-          <div className="text-xs text-[var(--text-muted)]">
-            {MONTHS[currentMonth - 1]} Borang B
-          </div>
-          <div className="text-xl font-display font-semibold mt-1">
-            {currentBorangB
-              ? currentBorangB.status === 'submitted'
-                ? 'Submitted'
-                : 'Draft Saved'
-              : 'Not Started'}
-          </div>
-        </div>
-      </div>
+      <StatisticsCards items={[
+        { label: 'Assigned Churches', value: districtChurches.length, icon: 'people', color: 'blue' },
+        { label: 'District Membership', value: totalDistrictMembers.toLocaleString(), icon: 'people', color: 'green' },
+        { label: 'Elders & Ministry Team', value: `${elderCount} / ${team.length}`, icon: 'people', color: 'purple' },
+        { label: `${MONTHS[currentMonth - 1]} Borang B`, value: currentBorangB ? currentBorangB.status === 'submitted' ? 'Submitted' : 'Draft Saved' : 'Not Started', icon: 'check', color: 'orange' },
+      ]} />
+      <button className="no-print text-xs border border-[var(--border-hairline)] rounded-lg px-3 py-2" onClick={() => setPreview({
+        title: 'District Ministry Statistics', subtitle: myDistrict?.name || profile?.displayName || '', filename: 'Ministry_Statistics',
+        summary: [['Churches', districtChurches.length], ['Membership', totalDistrictMembers], ['Team Members', team.length]],
+        sections: [{ title: 'Assigned Churches', columns: ['Church', 'Membership'], rows: districtChurches.map(church => [church.name, church.memberCount || 0]) },
+          { title: 'Ministry Team', columns: ['Name', 'Role', 'Church'], rows: team.map(member => [member.fullName, member.role, member.churchName || '-']) }],
+      })}>Preview / Print Ministry Statistics</button>
+      {preview && <ReportPreview report={preview} onClose={() => setPreview(null)} />}
 
       {/* Tabs + Controls */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">

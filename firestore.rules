@@ -22,7 +22,7 @@ service cloud.firestore {
     }
 
     function isSignedIn() {
-      return request.auth != null;
+      return request.auth != null && !exists(/databases/$(database)/documents/account_deletion_jobs/$(request.auth.uid));
     }
 
     function isVerified() {
@@ -41,32 +41,28 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
 
+    // userRole is authoritative. Display fields and legacy flags never grant access.
+    function hasRole(data, roles) {
+      return data.get('userRole', 'user') in roles;
+    }
+
+    function isActiveUser() {
+      return isVerified() && userDocExists() &&
+        callerDoc().get('isActive', true) == true &&
+        callerDoc().get('isApproved', true) == true &&
+        callerDoc().get('approvalStatus', 'approved') == 'approved';
+    }
+
     function isSuperAdmin() {
-      return isBootstrappedSuperAdmin() || (
-        isVerified() && userDocExists() && (
-          callerDoc().get('userRole', '') in ['super_admin', 'superadmin', 'superAdmin'] ||
-          callerDoc().get('role', '') in ['super_admin', 'superadmin', 'superAdmin', 'Super Admin']
-        )
-      );
+      return isActiveUser() && hasRole(callerDoc(), ['super_admin', 'superAdmin', 'superadmin']);
     }
 
     function isAdmin() {
-      return isSuperAdmin() || (
-        isVerified() && userDocExists() && (
-          callerDoc().get('userRole', '') == 'admin' ||
-          callerDoc().get('role', '') in ['admin', 'Admin'] ||
-          callerDoc().get('isAdmin', false) == true
-        )
-      );
+      return isActiveUser() && hasRole(callerDoc(), ['super_admin', 'superAdmin', 'superadmin', 'admin']);
     }
 
     function isMissionAdmin() {
-      return isAdmin() || (
-        isVerified() && userDocExists() && (
-          callerDoc().get('userRole', '') in ['mission_admin', 'missionAdmin', 'missionPresident'] ||
-          callerDoc().get('role', '') in ['mission_admin', 'missionAdmin', 'Mission Admin', 'Mission President']
-        )
-      );
+      return isActiveUser() && hasRole(callerDoc(), ['super_admin', 'superAdmin', 'superadmin', 'admin', 'mission_admin', 'missionAdmin', 'missionPresident']);
     }
 
     function callerMissionId() {
@@ -79,51 +75,88 @@ service cloud.firestore {
 
     function isMissionAdminFor(missionId) {
       return isAdmin() || (
-        isVerified() && userDocExists() &&
-        callerDoc().get('userRole', '') in ['mission_admin', 'missionAdmin', 'missionPresident'] &&
-        callerMissionId() == missionId
+        isActiveUser() && hasRole(callerDoc(), ['mission_admin', 'missionAdmin', 'missionPresident']) &&
+        missionId is string && missionId.size() > 0 && callerMissionId() == missionId
       );
     }
 
-    function isMissionLeadership() {
-      return isMissionAdmin() || (
-        isVerified() && userDocExists() &&
-        callerDoc().get('userRole', '') in ['ministerial_secretary', 'ministerialSecretary', 'director', 'officer']
+    function isMissionLeadershipFor(missionId) {
+      return isAdmin() || (
+        isActiveUser() &&
+        hasRole(callerDoc(), ['mission_admin', 'missionAdmin', 'missionPresident', 'ministerial_secretary', 'ministerialSecretary', 'director', 'officer']) &&
+        missionId is string && missionId.size() > 0 && callerMissionId() == missionId
       );
     }
 
     function isDistrictPastorFor(districtId) {
-      return isVerified() && userDocExists() && (
-        callerDoc().get('userRole', '') in ['district_pastor', 'districtPastor'] &&
-        callerDistrictId() == districtId
-      ) || (
-        isVerified() &&
-        exists(/databases/$(database)/documents/districts/$(districtId)) &&
-        get(/databases/$(database)/documents/districts/$(districtId)).data.get('districtPastorId', '') == request.auth.uid
+      return isActiveUser() && (
+        (hasRole(callerDoc(), ['district_pastor', 'districtPastor']) && callerDistrictId() == districtId) ||
+        (exists(/databases/$(database)/documents/districts/$(districtId)) &&
+         get(/databases/$(database)/documents/districts/$(districtId)).data.get('districtPastorId', '') == request.auth.uid)
       );
     }
 
     function isChurchTreasurerFor(churchId) {
-      return isVerified() && userDocExists() && (
-        callerDoc().get('userRole', '') in ['church_treasurer', 'churchTreasurer'] &&
-        callerDoc().get('churchId', '') == churchId
-      ) || (
-        isVerified() &&
-        exists(/databases/$(database)/documents/churches/$(churchId)) &&
-        get(/databases/$(database)/documents/churches/$(churchId)).data.get('treasurerId', '') == request.auth.uid
+      return isActiveUser() && (
+        (hasRole(callerDoc(), ['church_treasurer', 'churchTreasurer']) && callerDoc().get('churchId', '') == churchId) ||
+        (exists(/databases/$(database)/documents/churches/$(churchId)) &&
+         get(/databases/$(database)/documents/churches/$(churchId)).data.get('treasurerId', '') == request.auth.uid)
       );
     }
 
     function isEditorInMission(missionId) {
       return isMissionAdminFor(missionId) || (
-        isVerified() && userDocExists() &&
-        callerDoc().get('userRole', '') == 'editor' &&
-        callerMissionId() == missionId
+        isActiveUser() && hasRole(callerDoc(), ['editor']) &&
+        missionId is string && missionId.size() > 0 && callerMissionId() == missionId
+      );
+    }
+
+    function userMission(data) {
+      return data.get('missionId', data.get('mission', ''));
+    }
+
+    function canManageUser(data) {
+      return isAdmin() || isMissionAdminFor(userMission(data));
+    }
+
+    function canUpdateUser(userId, oldData, newData) {
+      let changed = newData.diff(oldData).affectedKeys();
+      let actorRole = callerDoc().get('userRole', 'user');
+      let oldRole = oldData.get('userRole', 'user');
+      let newRole = newData.get('userRole', 'user');
+      let globalRoles = ['super_admin', 'superAdmin', 'superadmin', 'admin'];
+      let missionRoles = ['mission_admin', 'missionAdmin', 'missionPresident'];
+      return (
+        request.auth.uid == userId && (
+          changed.hasOnly(['displayName', 'photoURL', 'phone', 'onboardingCompleted', 'updatedAt']) || (
+            isActiveUser() && oldRole == 'user' && oldData.get('onboardingCompleted', false) == false &&
+            changed.hasOnly([
+              'displayName', 'photoURL', 'phone', 'unionId', 'unionName',
+              'missionId', 'mission', 'missionName', 'regionId', 'region', 'regionName',
+              'districtId', 'district', 'districtName', 'churchId', 'churchName',
+              'onboardingCompleted', 'updatedAt'
+            ])
+          )
+        )
+      ) || (
+        isActiveUser() && (
+          actorRole in ['super_admin', 'superAdmin', 'superadmin'] ||
+          (actorRole == 'admin' && !(oldRole in globalRoles) && !(newRole in globalRoles)) ||
+          (actorRole in missionRoles &&
+           !(oldRole in globalRoles) && !(newRole in globalRoles) &&
+           !(oldRole in missionRoles) && !(newRole in missionRoles) &&
+           callerMissionId() != '' &&
+           userMission(oldData) == callerMissionId() && userMission(newData) == callerMissionId())
+        )
       );
     }
 
     function validOptStr(data, key, maxLen) {
       return !(key in data) || (data[key] is string && data[key].size() <= maxLen);
+    }
+
+    function nullableOptStr(data, key, maxLen) {
+      return !(key in data) || data[key] == null || (data[key] is string && data[key].size() <= maxLen);
     }
 
     function validOptBool(data, key) {
@@ -138,44 +171,46 @@ service cloud.firestore {
     // Entity Validation Blueprints (Pillar 2)
     // -------------------------------------------------------------------------
     function isValidUser(data) {
-      return data.keys().hasAll(['uid', 'email', 'displayName', 'userRole', 'level', 'isActive', 'onboardingCompleted', 'createdAt', 'updatedAt']) &&
+      return data.keys().hasAll(['email', 'displayName', 'userRole', 'onboardingCompleted']) &&
         data.keys().hasOnly([
           'uid', 'email', 'displayName', 'photoURL', 'phone', 'userRole', 'role', 'roleTitle',
-          'isAdmin', 'level', 'unionId', 'unionName', 'missionId', 'mission', 'missionName',
-          'regionId', 'regionName', 'districtId', 'district', 'districtName', 'churchId', 'churchName',
-          'isPremium', 'isActive', 'approvalStatus', 'approvedBy', 'approvalNote',
+          'isAdmin', 'isEditor', 'isMissionAdmin', 'isChurchTreasurer', 'level', 'unionId', 'unionName', 'missionId', 'mission', 'missionName',
+          'regionId', 'region', 'regionName', 'districtId', 'district', 'districtName', 'churchId', 'churchName',
+          'isPremium', 'isActive', 'isApproved', 'approvalStatus', 'approvedBy', 'approvalNote',
           'onboardingCompleted', 'createdAt', 'updatedAt'
         ]) &&
-        isValidId(data.uid) &&
+        (!('uid' in data) || isValidId(data.uid)) &&
         data.email is string && data.email.size() >= 3 && data.email.size() <= 200 &&
         data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120 &&
         validOptStr(data, 'photoURL', 500) &&
         validOptStr(data, 'phone', 40) &&
         data.userRole in ['super_admin', 'superAdmin', 'admin', 'mission_admin', 'missionAdmin', 'missionPresident', 'ministerial_secretary', 'ministerialSecretary', 'director', 'officer', 'editor', 'district_pastor', 'districtPastor', 'church_treasurer', 'churchTreasurer', 'user'] &&
         validOptStr(data, 'role', 64) &&
-        validOptStr(data, 'roleTitle', 80) &&
+        nullableOptStr(data, 'roleTitle', 80) &&
         validOptBool(data, 'isAdmin') &&
-        data.level is int && data.level >= 1 && data.level <= 5 &&
+        validOptInt(data, 'level', 1, 5) &&
         validOptStr(data, 'unionId', 128) &&
         validOptStr(data, 'unionName', 120) &&
         validOptStr(data, 'missionId', 128) &&
-        validOptStr(data, 'mission', 128) &&
+        nullableOptStr(data, 'mission', 128) &&
         validOptStr(data, 'missionName', 120) &&
         validOptStr(data, 'regionId', 128) &&
+        nullableOptStr(data, 'region', 128) &&
         validOptStr(data, 'regionName', 120) &&
         validOptStr(data, 'districtId', 128) &&
-        validOptStr(data, 'district', 128) &&
+        nullableOptStr(data, 'district', 128) &&
         validOptStr(data, 'districtName', 120) &&
-        validOptStr(data, 'churchId', 128) &&
+        nullableOptStr(data, 'churchId', 128) &&
         validOptStr(data, 'churchName', 120) &&
         validOptBool(data, 'isPremium') &&
-        data.isActive is bool &&
+        validOptBool(data, 'isActive') &&
+        validOptBool(data, 'isApproved') &&
         (!('approvalStatus' in data) || data.approvalStatus in ['pending', 'approved', 'rejected']) &&
         validOptStr(data, 'approvedBy', 128) &&
         validOptStr(data, 'approvalNote', 300) &&
         data.onboardingCompleted is bool &&
-        data.createdAt is timestamp &&
-        data.updatedAt is timestamp;
+        (!('createdAt' in data) || data.createdAt is timestamp) &&
+        (!('updatedAt' in data) || data.updatedAt is timestamp);
     }
 
     function isValidUnion(data) {
@@ -327,6 +362,40 @@ service cloud.firestore {
         data.updatedAt is timestamp;
     }
 
+    // Canonical Flutter church report. FAM data and legacy React records use their existing rules.
+    function canonicalFinancialKeys() {
+      return ['id', 'churchId', 'missionId', 'districtId', 'regionId', 'month', 'year',
+        'tithe', 'offerings', 'specialOfferings', 'receiptNumberFrom', 'receiptNumberTo',
+        'customFinanceTypes', 'notes', 'submittedBy', 'submittedAt', 'createdAt',
+        'updatedAt', 'editedBy', 'status', 'history'];
+    }
+
+    function validCanonicalFinancial(data, reportId) {
+      return data.id == reportId && isValidId(data.churchId) && isValidId(data.missionId) && isValidId(data.districtId) &&
+        data.month is timestamp && data.year is int && data.year >= 2000 && data.year <= 2100 &&
+        data.tithe is number && data.tithe >= 0 && data.offerings is number && data.offerings >= 0 &&
+        data.specialOfferings is number && data.specialOfferings >= 0 &&
+        data.customFinanceTypes is list && data.customFinanceTypes.size() <= 30 &&
+        data.history is list && data.history.size() <= 100 &&
+        data.notes is string && data.notes.size() <= 2000 &&
+        data.receiptNumberFrom is string && data.receiptNumberFrom.size() <= 120 &&
+        data.receiptNumberTo is string && data.receiptNumberTo.size() <= 120 &&
+        data.status in ['draft', 'submitted'] && isValidId(data.submittedBy) && data.editedBy == request.auth.uid &&
+        data.createdAt is timestamp && data.submittedAt is timestamp && data.updatedAt == request.time;
+    }
+
+    function churchMatchesFinancial(data) {
+      let church = get(/databases/$(database)/documents/churches/$(data.churchId)).data;
+      return church.missionId == data.missionId && church.districtId == data.districtId;
+    }
+
+    function isDistrictFinancialReader(data) {
+      return hasRole(callerDoc(), ['district_pastor', 'districtPastor']) && isValidId(callerDistrictId()) && (
+        data.get('districtId', '') == callerDistrictId() ||
+        (isValidId(data.get('churchId', '')) && get(/databases/$(database)/documents/churches/$(data.churchId)).data.districtId == callerDistrictId())
+      );
+    }
+
     function isValidFamData(data) {
       return data.keys().hasAll(['reportId', 'missionId', 'districtId', 'churchId', 'submittedBy', 'year', 'month', 'openingBalance', 'closingBalance', 'funds', 'expenses', 'createdAt', 'updatedAt']) &&
         data.keys().hasOnly(['reportId', 'missionId', 'districtId', 'churchId', 'submittedBy', 'year', 'month', 'openingBalance', 'closingBalance', 'funds', 'expenses', 'createdAt', 'updatedAt']) &&
@@ -366,69 +435,78 @@ service cloud.firestore {
         data.updatedAt is timestamp;
     }
 
+    function borangBKeys() {
+      return [
+        'id', 'userId', 'userName', 'pastorName', 'missionId', 'regionId', 'districtId',
+        'districtName', 'churchId', 'year', 'month', 'status', 'submittedAt', 'membersBeginning',
+        'membersReceived', 'membersTransferredIn', 'membersTransferredOut', 'membersDropped', 'membersDeceased', 'membersEnd', 'baptisms',
+        'professionOfFaith', 'sabbathServices', 'prayerMeetings', 'bibleStudies', 'evangelisticMeetings', 'homeVisitations', 'hospitalVisitations',
+        'prisonVisitations', 'weddings', 'funerals', 'dedications', 'booksDistributed', 'magazinesDistributed', 'tractsDistributed',
+        'tithe', 'offerings', 'otherActivities', 'challenges', 'remarks', 'sermonsPreached', 'bibleStudiesGiven',
+        'counselingSessions', 'professionsOfFaith', 'boardMeetings', 'communionServices', 'anointings', 'childDedications', 'titheFaithfulnessNotes',
+        'challengesAndPrayer', 'nextMonthGoals', 'createdAt', 'updatedAt'
+      ];
+    }
+
     function isValidBorangB(data) {
-      return data.keys().hasAll([
-          'userId', 'pastorName', 'missionId', 'districtId', 'year', 'month', 'status',
-          'sermonsPreached', 'bibleStudiesGiven', 'homeVisitations', 'hospitalVisitations',
-          'counselingSessions', 'evangelisticMeetings', 'baptisms', 'professionsOfFaith',
-          'boardMeetings', 'communionServices', 'createdAt', 'updatedAt'
-        ]) &&
-        data.keys().hasOnly([
-          'userId', 'pastorName', 'missionId', 'regionId', 'districtId', 'districtName',
-          'year', 'month', 'status', 'sermonsPreached', 'bibleStudiesGiven',
-          'homeVisitations', 'hospitalVisitations', 'counselingSessions', 'evangelisticMeetings',
-          'baptisms', 'professionsOfFaith', 'boardMeetings', 'communionServices',
-          'anointings', 'weddings', 'funerals', 'childDedications',
-          'titheFaithfulnessNotes', 'challengesAndPrayer', 'nextMonthGoals',
-          'createdAt', 'updatedAt'
-        ]) &&
-        isValidId(data.userId) &&
-        data.pastorName is string && data.pastorName.size() >= 1 && data.pastorName.size() <= 120 &&
-        isValidId(data.missionId) &&
-        validOptStr(data, 'regionId', 128) &&
-        isValidId(data.districtId) &&
-        validOptStr(data, 'districtName', 120) &&
-        data.year is int && data.year >= 2000 && data.year <= 2100 &&
-        data.month is int && data.month >= 1 && data.month <= 12 &&
+      return data.keys().hasAll(['id', 'userId', 'userName', 'month', 'status', 'createdAt', 'updatedAt']) &&
+        isValidId(data.id) && isValidId(data.userId) &&
+        data.userName is string && data.userName.size() >= 1 && data.userName.size() <= 120 &&
+        data.month is string && data.month.matches('^[0-9]{4}-(0[1-9]|1[0-2])-01T.*$') &&
         data.status in ['draft', 'submitted'] &&
-        data.sermonsPreached is int && data.sermonsPreached >= 0 && data.sermonsPreached <= 1000 &&
-        data.bibleStudiesGiven is int && data.bibleStudiesGiven >= 0 && data.bibleStudiesGiven <= 2000 &&
-        data.homeVisitations is int && data.homeVisitations >= 0 && data.homeVisitations <= 2000 &&
-        data.hospitalVisitations is int && data.hospitalVisitations >= 0 && data.hospitalVisitations <= 1000 &&
-        data.counselingSessions is int && data.counselingSessions >= 0 && data.counselingSessions <= 1000 &&
-        data.evangelisticMeetings is int && data.evangelisticMeetings >= 0 && data.evangelisticMeetings <= 1000 &&
-        data.baptisms is int && data.baptisms >= 0 && data.baptisms <= 5000 &&
-        data.professionsOfFaith is int && data.professionsOfFaith >= 0 && data.professionsOfFaith <= 5000 &&
-        data.boardMeetings is int && data.boardMeetings >= 0 && data.boardMeetings <= 500 &&
-        data.communionServices is int && data.communionServices >= 0 && data.communionServices <= 500 &&
-        validOptInt(data, 'anointings', 0, 500) &&
-        validOptInt(data, 'weddings', 0, 500) &&
-        validOptInt(data, 'funerals', 0, 500) &&
-        validOptInt(data, 'childDedications', 0, 500) &&
-        validOptStr(data, 'titheFaithfulnessNotes', 1500) &&
-        validOptStr(data, 'challengesAndPrayer', 2000) &&
-        validOptStr(data, 'nextMonthGoals', 2000) &&
-        data.createdAt is timestamp &&
-        data.updatedAt is timestamp;
+        (data.get('missionId', '') is string) && (data.get('districtId', '') is string) &&
+        (data.get('regionId', '') is string) && (data.get('districtName', '') is string) &&
+        (data.get('churchId', '') is string) &&
+        (data.membersBeginning is int && data.membersBeginning >= 0) &&
+        (data.membersReceived is int && data.membersReceived >= 0) &&
+        (data.membersTransferredIn is int && data.membersTransferredIn >= 0) &&
+        (data.membersTransferredOut is int && data.membersTransferredOut >= 0) &&
+        (data.membersDropped is int && data.membersDropped >= 0) &&
+        (data.membersDeceased is int && data.membersDeceased >= 0) &&
+        (data.membersEnd is int && data.membersEnd >= 0) &&
+        (data.baptisms is int && data.baptisms >= 0) &&
+        (data.professionOfFaith is int && data.professionOfFaith >= 0) &&
+        (data.sabbathServices is int && data.sabbathServices >= 0) &&
+        (data.prayerMeetings is int && data.prayerMeetings >= 0) &&
+        (data.bibleStudies is int && data.bibleStudies >= 0) &&
+        (data.evangelisticMeetings is int && data.evangelisticMeetings >= 0) &&
+        (data.homeVisitations is int && data.homeVisitations >= 0) &&
+        (data.hospitalVisitations is int && data.hospitalVisitations >= 0) &&
+        (data.prisonVisitations is int && data.prisonVisitations >= 0) &&
+        (data.weddings is int && data.weddings >= 0) &&
+        (data.funerals is int && data.funerals >= 0) &&
+        (data.dedications is int && data.dedications >= 0) &&
+        (data.booksDistributed is int && data.booksDistributed >= 0) &&
+        (data.magazinesDistributed is int && data.magazinesDistributed >= 0) &&
+        (data.tractsDistributed is int && data.tractsDistributed >= 0) &&
+
+        (!('tithe' in data) || (data.tithe is number && data.tithe >= 0 && data.tithe <= 100000000000)) &&
+        (!('offerings' in data) || (data.offerings is number && data.offerings >= 0 && data.offerings <= 100000000000)) &&
+        data.otherActivities is string && data.otherActivities.size() <= 10000 && data.challenges is string && data.challenges.size() <= 10000 && data.remarks is string && data.remarks.size() <= 10000 &&
+        data.createdAt is string && data.createdAt.size() >= 19 && data.createdAt.size() <= 40 &&
+        data.updatedAt is string && data.updatedAt.size() >= 19 && data.updatedAt.size() <= 40;
     }
 
     function isValidActivity(data) {
-      return data.keys().hasAll(['userId', 'missionId', 'title', 'category', 'date', 'durationMinutes', 'createdAt', 'updatedAt']) &&
-        data.keys().hasOnly(['userId', 'missionId', 'districtId', 'churchId', 'churchName', 'title', 'category', 'date', 'durationMinutes', 'participants', 'location', 'notes', 'createdAt', 'updatedAt']) &&
+      return data.keys().hasAll(['userId', 'date', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly([
+          'id', 'userId', 'missionId', 'districtId', 'churchId', 'churchName',
+          'activities', 'mileage', 'note', 'title', 'category', 'date', 'durationMinutes',
+          'participants', 'location', 'notes', 'createdAt', 'updatedAt'
+        ]) &&
         isValidId(data.userId) &&
-        isValidId(data.missionId) &&
-        validOptStr(data, 'districtId', 128) &&
-        validOptStr(data, 'churchId', 128) &&
+        validOptStr(data, 'id', 128) && validOptStr(data, 'missionId', 128) &&
+        validOptStr(data, 'districtId', 128) && validOptStr(data, 'churchId', 128) &&
         validOptStr(data, 'churchName', 160) &&
-        data.title is string && data.title.size() >= 1 && data.title.size() <= 160 &&
-        data.category in ['visitation', 'evangelism', 'meeting', 'worship', 'counseling', 'training', 'administration'] &&
+        (('activities' in data && data.activities is string && data.activities.size() >= 1 && data.activities.size() <= 10000) ||
+         ('title' in data && data.title is string && data.title.size() >= 1 && data.title.size() <= 10000)) &&
+        (!('mileage' in data) || (data.mileage is number && data.mileage >= 0 && data.mileage <= 1000000)) &&
+        (!('category' in data) || data.category in ['visitation', 'evangelism', 'meeting', 'worship', 'counseling', 'training', 'administration']) &&
         data.date is string && data.date.size() >= 8 && data.date.size() <= 32 &&
-        data.durationMinutes is int && data.durationMinutes >= 0 && data.durationMinutes <= 10080 &&
-        validOptInt(data, 'participants', 0, 50000) &&
-        validOptStr(data, 'location', 160) &&
-        validOptStr(data, 'notes', 2000) &&
-        data.createdAt is timestamp &&
-        data.updatedAt is timestamp;
+        validOptInt(data, 'durationMinutes', 0, 10080) && validOptInt(data, 'participants', 0, 50000) &&
+        (!('location' in data) || data.location == null || (data.location is string && data.location.size() <= 160)) &&
+        validOptStr(data, 'note', 2000) && validOptStr(data, 'notes', 2000) &&
+        data.createdAt is timestamp && data.updatedAt is timestamp;
     }
 
     function isValidAppointment(data) {
@@ -509,12 +587,12 @@ service cloud.firestore {
 
     function isValidLocationRequest(data) {
       return data.keys().hasAll(['userId', 'userName', 'userEmail', 'churchName', 'status', 'createdAt', 'updatedAt']) &&
-        data.keys().hasOnly(['userId', 'requestedBy', 'userName', 'userEmail', 'missionName', 'regionName', 'districtName', 'churchName', 'notes', 'status', 'reviewedBy', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['userId', 'requestedBy', 'userName', 'userEmail', 'missionId', 'missionName', 'regionName', 'districtName', 'churchName', 'notes', 'status', 'reviewedBy', 'createdAt', 'updatedAt']) &&
         isValidId(data.userId) &&
         (!('requestedBy' in data) || data.requestedBy == data.userId) &&
         data.userName is string && data.userName.size() >= 1 && data.userName.size() <= 120 &&
         data.userEmail is string && data.userEmail.size() >= 3 && data.userEmail.size() <= 200 &&
-        validOptStr(data, 'missionName', 120) &&
+        validOptStr(data, 'missionId', 'missionName', 120) &&
         validOptStr(data, 'regionName', 120) &&
         validOptStr(data, 'districtName', 120) &&
         data.churchName is string && data.churchName.size() >= 1 && data.churchName.size() <= 160 &&
@@ -560,7 +638,7 @@ service cloud.firestore {
 
     function isValidAdminActivity(data) {
       return data.keys().hasAll(['actorId', 'actorName', 'action', 'targetType', 'summary', 'createdAt']) &&
-        data.keys().hasOnly(['actorId', 'actorName', 'action', 'targetType', 'targetId', 'summary', 'createdAt']) &&
+        data.keys().hasOnly(['actorId', 'actorName', 'action', 'targetType', 'targetId', 'summary', 'missionId', 'createdAt']) &&
         isValidId(data.actorId) &&
         data.actorName is string && data.actorName.size() >= 1 && data.actorName.size() <= 120 &&
         data.action is string && data.action.size() >= 1 && data.action.size() <= 120 &&
@@ -581,16 +659,20 @@ service cloud.firestore {
 
     // Users (PII Isolation + Strict Anti-Self-Elevation)
     match /users/{userId} {
-      allow get: if isValidId(userId) && isSignedIn() && (request.auth.uid == userId || isMissionAdmin());
-      allow list: if isSignedIn() && (existing().uid == request.auth.uid || isMissionAdmin());
+      allow get: if isValidId(userId) && isSignedIn() && (request.auth.uid == userId || canManageUser(existing()));
+      allow list: if isSignedIn() && (existing().get('uid', '') == request.auth.uid || canManageUser(existing()));
       allow create: if isValidId(userId) && isVerified() &&
         isValidUser(incoming()) &&
+        incoming().keys().hasAll(['uid', 'level', 'isActive', 'createdAt', 'updatedAt']) &&
         incoming().uid == request.auth.uid &&
         request.auth.uid == userId &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time && (
           isBootstrappedSuperAdmin() || (
             incoming().userRole == 'user' &&
+            incoming().get('role', 'user') == 'user' &&
+            incoming().get('roleTitle', 'Pastor / User') in ['Pastor / User', 'User'] &&
+            incoming().email == request.auth.token.email &&
             incoming().level == 1 &&
             incoming().get('isAdmin', false) == false &&
             incoming().get('isPremium', false) == false &&
@@ -599,46 +681,11 @@ service cloud.firestore {
           )
         );
       allow update: if isValidId(userId) && isVerified() &&
+        canUpdateUser(userId, existing(), incoming()) &&
         isValidUser(incoming()) &&
-        incoming().uid == existing().uid &&
-        incoming().createdAt == existing().createdAt &&
-        incoming().updatedAt == request.time && (
-          // Self profile & onboarding updates (cannot change role, level, isAdmin, isPremium, isActive, or approval fields)
-          (
-            request.auth.uid == userId &&
-            incoming().diff(existing()).affectedKeys().hasOnly([
-              'displayName', 'photoURL', 'phone', 'unionId', 'unionName',
-              'missionId', 'missionName', 'regionId', 'regionName',
-              'districtId', 'districtName', 'churchId', 'churchName',
-              'onboardingCompleted', 'updatedAt'
-            ])
-          ) ||
-          // Super Admin can update any user including assigning Admin / Super Admin & approving login
-          isSuperAdmin() ||
-          // Admin can manage & approve users below admin/super_admin
-          (
-            isAdmin() &&
-            !(incoming().userRole in ['super_admin', 'admin']) &&
-            !(existing().userRole in ['super_admin'])
-          ) ||
-          // Mission Admin scoped to own mission or pending unassigned logins, and roles below mission_admin
-          (
-            (
-              isMissionAdminFor(existing().get('missionId', '')) ||
-              (
-                isMissionAdmin() &&
-                existing().get('missionId', '') == '' &&
-                existing().get('approvalStatus', 'pending') == 'pending' &&
-                (
-                  incoming().get('missionId', '') == '' ||
-                  incoming().get('missionId', '') == callerDoc().get('missionId', '')
-                )
-              )
-            ) &&
-            !(incoming().userRole in ['super_admin', 'admin', 'mission_admin']) &&
-            !(existing().userRole in ['super_admin', 'admin', 'mission_admin'])
-          )
-        );
+        incoming().get('uid', userId) == existing().get('uid', userId) &&
+        incoming().get('createdAt', null) == existing().get('createdAt', null) &&
+        incoming().updatedAt == request.time;
       allow delete: if isValidId(userId) && isSuperAdmin() && request.auth.uid != userId;
     }
 
@@ -678,8 +725,8 @@ service cloud.firestore {
       }
 
       match /reports/{reportId} {
-        allow get: if isValidId(missionId) && isValidId(reportId) && isMissionLeadership();
-        allow list: if isValidId(missionId) && isMissionLeadership() && existing().missionId == missionId;
+        allow get: if isValidId(missionId) && isValidId(reportId) && isMissionLeadershipFor(missionId);
+        allow list: if isValidId(missionId) && isMissionLeadershipFor(missionId) && existing().missionId == missionId;
         allow create: if isValidId(missionId) && isValidId(reportId) && isMissionAdminFor(missionId) &&
           isValidMissionReportSummary(incoming()) &&
           incoming().missionId == missionId && incoming().createdBy == request.auth.uid &&
@@ -757,17 +804,29 @@ service cloud.firestore {
 
     // Financial Reports (Church Treasurer + Mission Leadership)
     match /financial_reports/{reportId} {
-      allow get: if isValidId(reportId) && isSignedIn() && (
+      allow read: if isActiveUser() && isDistrictFinancialReader(existing());
+      allow create: if isActiveUser() && isValidId(reportId) && validCanonicalFinancial(incoming(), reportId) &&
+        incoming().keys().hasOnly(canonicalFinancialKeys()) && incoming().submittedBy == request.auth.uid &&
+        incoming().createdAt == request.time && churchMatchesFinancial(incoming()) &&
+        (isMissionAdminFor(incoming().missionId) || isDistrictPastorFor(incoming().districtId) || isChurchTreasurerFor(incoming().churchId));
+      allow update: if isActiveUser() && isValidId(reportId) && validCanonicalFinancial(incoming(), reportId) &&
+        incoming().diff(existing()).affectedKeys().hasOnly(canonicalFinancialKeys()) && existing().month is timestamp &&
+        incoming().churchId == existing().churchId && incoming().missionId == existing().missionId &&
+        incoming().districtId == existing().districtId && incoming().month == existing().month && incoming().year == existing().year &&
+        incoming().createdAt == existing().createdAt && incoming().submittedBy == existing().submittedBy &&
+        !(existing().status in ['approved', 'verified']) && churchMatchesFinancial(incoming()) &&
+        (isMissionAdminFor(existing().missionId) || isDistrictPastorFor(existing().districtId) || isChurchTreasurerFor(existing().churchId));
+      allow get: if isValidId(reportId) && isActiveUser() && (
         existing().submittedBy == request.auth.uid ||
         isChurchTreasurerFor(existing().churchId) ||
-        isMissionLeadership()
+        isMissionLeadershipFor(existing().get('missionId', ''))
       );
-      allow list: if isSignedIn() && (
+      allow list: if isActiveUser() && (
         existing().submittedBy == request.auth.uid ||
-        (userDocExists() && callerDoc().userRole == 'church_treasurer' && existing().churchId == callerDoc().get('churchId', '')) ||
-        isMissionLeadership()
+        (hasRole(callerDoc(), ['church_treasurer', 'churchTreasurer']) && existing().churchId == callerDoc().get('churchId', '')) ||
+        isMissionLeadershipFor(existing().get('missionId', ''))
       );
-      allow create: if isValidId(reportId) && isVerified() &&
+      allow create: if isValidId(reportId) && isActiveUser() &&
         isValidFinancialReport(incoming()) &&
         incoming().submittedBy == request.auth.uid &&
         incoming().createdAt == request.time &&
@@ -776,7 +835,7 @@ service cloud.firestore {
           isMissionAdminFor(incoming().missionId) ||
           isChurchTreasurerFor(incoming().churchId)
         );
-      allow update: if isValidId(reportId) && isVerified() &&
+      allow update: if isValidId(reportId) && isActiveUser() &&
         isValidFinancialReport(incoming()) &&
         incoming().churchId == existing().churchId &&
         incoming().missionId == existing().missionId &&
@@ -794,17 +853,17 @@ service cloud.firestore {
 
     // FAM Data (1:1 linked to Financial Report)
     match /fam_data/{famId} {
-      allow get: if isValidId(famId) && isSignedIn() && (
+      allow get: if isValidId(famId) && isActiveUser() && (
         existing().submittedBy == request.auth.uid ||
         isChurchTreasurerFor(existing().churchId) ||
-        isMissionLeadership()
+        isMissionLeadershipFor(existing().get('missionId', ''))
       );
-      allow list: if isSignedIn() && (
+      allow list: if isActiveUser() && (
         existing().submittedBy == request.auth.uid ||
-        (userDocExists() && callerDoc().userRole == 'church_treasurer' && existing().churchId == callerDoc().get('churchId', '')) ||
-        isMissionLeadership()
+        (hasRole(callerDoc(), ['church_treasurer', 'churchTreasurer']) && existing().churchId == callerDoc().get('churchId', '')) ||
+        isMissionLeadershipFor(existing().get('missionId', ''))
       );
-      allow create: if isValidId(famId) && isVerified() &&
+      allow create: if isValidId(famId) && isActiveUser() &&
         isValidFamData(incoming()) &&
         incoming().submittedBy == request.auth.uid &&
         incoming().createdAt == request.time &&
@@ -812,7 +871,7 @@ service cloud.firestore {
           isMissionAdminFor(incoming().missionId) ||
           isChurchTreasurerFor(incoming().churchId)
         );
-      allow update: if isValidId(famId) && isVerified() &&
+      allow update: if isValidId(famId) && isActiveUser() &&
         isValidFamData(incoming()) &&
         incoming().reportId == existing().reportId &&
         incoming().churchId == existing().churchId &&
@@ -824,19 +883,65 @@ service cloud.firestore {
       allow delete: if isValidId(famId) && isAdmin();
     }
 
+    function validDepartmentTemplate(data) {
+      return data.keys().hasAll(['key', 'name', 'isActive', 'order', 'steps', 'createdAt', 'updatedAt', 'createdBy']) &&
+        data.keys().hasOnly(['key', 'name', 'description', 'isActive', 'order', 'steps', 'createdAt', 'updatedAt', 'createdBy']) &&
+        data.key is string && data.key.matches('^[a-z][a-z0-9_]{0,63}$') &&
+        data.name is string && data.name.size() > 0 && data.name.size() <= 160 &&
+        validOptStr(data, 'description', 4000) && data.isActive is bool && data.order is number &&
+        data.steps is list && data.steps.size() > 0 && data.steps.size() <= 20 &&
+        data.createdAt is timestamp && data.updatedAt is timestamp && isValidId(data.createdBy);
+    }
+    match /department_report_templates/{templateId} {
+      allow read: if isActiveUser();
+      allow create: if isAdmin() && isValidId(templateId) && validDepartmentTemplate(incoming()) && incoming().createdBy == request.auth.uid;
+      allow update: if isAdmin() && validDepartmentTemplate(incoming()) && incoming().key == existing().key &&
+        incoming().createdAt == existing().createdAt && incoming().createdBy == existing().createdBy;
+      allow delete: if isAdmin();
+    }
+    function dynamicDepartmentKeys() {
+      return ['id', 'churchId', 'churchName', 'districtId', 'missionId', 'year', 'quarter', 'templateId',
+        'departmentKey', 'departmentName', 'submittedBy', 'submittedByName', 'submittedAt', 'createdAt',
+        'updatedAt', 'editedBy', 'values', 'templateSnapshot', 'templateRevision', 'templateUpdatedAt', 'status'];
+    }
+    function validDynamicDepartment(data, reportId) {
+      let template = get(/databases/$(database)/documents/department_report_templates/$(data.templateId)).data;
+      return data.id == reportId && isValidId(data.churchId) && isValidId(data.districtId) && isValidId(data.missionId) &&
+        data.churchName is string && data.churchName.size() > 0 && data.churchName.size() <= 160 &&
+        data.year is int && data.year >= 2000 && data.year <= 2100 && data.quarter in [1, 2, 3, 4] &&
+        data.departmentKey == template.key && data.departmentName is string && data.departmentName.size() <= 160 && template.isActive == true &&
+        data.values is map && data.values.size() <= 800 && data.submittedBy is string && data.submittedByName is string &&
+        data.createdAt is timestamp && data.submittedAt is timestamp && data.updatedAt is timestamp && data.editedBy == request.auth.uid &&
+        (!('templateSnapshot' in data) || (data.templateSnapshot is map && data.templateSnapshot.key == template.key)) &&
+        (!('templateUpdatedAt' in data) || data.templateUpdatedAt == template.updatedAt);
+    }
+
     // Quarterly Department Reports (Deterministic ID: {churchId}_{year}_Q{quarter}_{department})
     match /quarterly_department_reports/{reportId} {
-      allow get: if isValidId(reportId) && isSignedIn() && (
+      allow read: if isActiveUser() && isDistrictFinancialReader(existing());
+      allow create: if isActiveUser() && isValidId(reportId) && validDynamicDepartment(incoming(), reportId) &&
+        incoming().keys().hasOnly(dynamicDepartmentKeys()) && incoming().submittedBy == request.auth.uid &&
+        churchMatchesFinancial(incoming()) && (isAdmin() || isDistrictPastorFor(incoming().districtId));
+      allow update: if isActiveUser() && isValidId(reportId) && validDynamicDepartment(incoming(), reportId) &&
+        incoming().diff(existing()).affectedKeys().hasOnly(dynamicDepartmentKeys()) &&
+        incoming().churchId == existing().churchId && incoming().missionId == existing().missionId && incoming().districtId == existing().districtId &&
+        incoming().year == existing().year && incoming().quarter == existing().quarter &&
+        incoming().submittedBy == existing().submittedBy && incoming().createdAt == existing().createdAt &&
+        ((!('departmentKey' in existing()) &&
+          (incoming().departmentKey == existing().get('department', '') || (incoming().departmentKey == 'kanak_kanak' && existing().get('department', '') == 'kanakKanak'))) || incoming().departmentKey == existing().get('departmentKey', '')) &&
+        churchMatchesFinancial(incoming()) && (isAdmin() || isDistrictPastorFor(incoming().districtId));
+
+      allow get: if isValidId(reportId) && isActiveUser() && (
         existing().submittedBy == request.auth.uid ||
         isDistrictPastorFor(existing().districtId) ||
-        isMissionLeadership()
+        isMissionLeadershipFor(existing().get('missionId', ''))
       );
-      allow list: if isSignedIn() && (
+      allow list: if isActiveUser() && (
         existing().submittedBy == request.auth.uid ||
-        (userDocExists() && callerDoc().userRole == 'district_pastor' && existing().districtId == callerDoc().get('districtId', '')) ||
-        isMissionLeadership()
+        (hasRole(callerDoc(), ['district_pastor', 'districtPastor']) && existing().districtId == callerDistrictId()) ||
+        isMissionLeadershipFor(existing().get('missionId', ''))
       );
-      allow create: if isValidId(reportId) && isVerified() &&
+      allow create: if isValidId(reportId) && isActiveUser() &&
         isValidQuarterlyReport(incoming()) &&
         incoming().submittedBy == request.auth.uid &&
         incoming().createdAt == request.time &&
@@ -845,9 +950,12 @@ service cloud.firestore {
           isMissionAdminFor(incoming().missionId) ||
           isDistrictPastorFor(incoming().districtId)
         );
-      allow update: if isValidId(reportId) && isVerified() &&
+      allow update: if isValidId(reportId) && isActiveUser() &&
         isValidQuarterlyReport(incoming()) &&
         incoming().churchId == existing().churchId &&
+        incoming().missionId == existing().missionId &&
+        incoming().districtId == existing().districtId &&
+        incoming().submittedBy == existing().submittedBy &&
         incoming().department == existing().department &&
         incoming().year == existing().year &&
         incoming().quarter == existing().quarter &&
@@ -861,130 +969,128 @@ service cloud.firestore {
 
     // Borang B Monthly Pastoral Reports
     match /borang_b_reports/{reportId} {
-      allow get: if isValidId(reportId) && isSignedIn() && (
+      allow read: if isActiveUser() && hasRole(callerDoc(), ['district_pastor', 'districtPastor']) && isValidId(callerDistrictId()) && existing().get('districtId', '') == callerDistrictId();
+      allow get: if isValidId(reportId) && isActiveUser() && (
         existing().userId == request.auth.uid ||
-        isMissionLeadership()
+        isMissionLeadershipFor(existing().get('missionId', ''))
       );
-      allow list: if isSignedIn() && (
+      allow list: if isActiveUser() && (
         existing().userId == request.auth.uid ||
-        isMissionLeadership()
+        isMissionLeadershipFor(existing().get('missionId', ''))
       );
-      allow create: if isValidId(reportId) && isVerified() &&
-        isValidBorangB(incoming()) &&
-        incoming().userId == request.auth.uid &&
-        incoming().createdAt == request.time &&
-        incoming().updatedAt == request.time;
-      allow update: if isValidId(reportId) && isVerified() &&
-        isValidBorangB(incoming()) &&
-        incoming().userId == existing().userId &&
-        incoming().createdAt == existing().createdAt &&
-        incoming().updatedAt == request.time && (
+      allow create: if isValidId(reportId) && isActiveUser() &&
+        isValidBorangB(incoming()) && incoming().keys().hasOnly(borangBKeys()) &&
+        incoming().id == reportId && incoming().userId == request.auth.uid;
+      allow update: if isValidId(reportId) && isActiveUser() &&
+        isValidBorangB(incoming()) && incoming().diff(existing()).affectedKeys().hasOnly(borangBKeys()) &&
+        incoming().id == reportId && incoming().userId == existing().userId &&
+        (incoming().createdAt == existing().createdAt || (existing().month is int && existing().createdAt is timestamp)) && (
           existing().userId == request.auth.uid ||
           isAdmin()
         );
-      allow delete: if isValidId(reportId) && isVerified() && (
+      allow delete: if isValidId(reportId) && isActiveUser() && (
         existing().userId == request.auth.uid || isAdmin()
       );
     }
 
     // Pastoral Activities
     match /activities/{activityId} {
-      allow get: if isValidId(activityId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
-      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
-      allow create: if isValidId(activityId) && isVerified() &&
+      allow get: if isValidId(activityId) && isActiveUser() && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isActiveUser() && (existing().userId == request.auth.uid || isAdmin());
+      allow create: if isValidId(activityId) && isActiveUser() &&
         isValidActivity(incoming()) &&
         incoming().userId == request.auth.uid &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time;
-      allow update: if isValidId(activityId) && isVerified() &&
+      allow update: if isValidId(activityId) && isActiveUser() &&
         isValidActivity(incoming()) &&
         incoming().userId == existing().userId &&
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time && (
           existing().userId == request.auth.uid || isAdmin()
         );
-      allow delete: if isValidId(activityId) && isVerified() && (
+      allow delete: if isValidId(activityId) && isActiveUser() && (
         existing().userId == request.auth.uid || isAdmin()
       );
     }
 
     // Pastoral Appointments
     match /appointments/{appointmentId} {
-      allow get: if isValidId(appointmentId) && isSignedIn() && existing().userId == request.auth.uid;
-      allow list: if isSignedIn() && existing().userId == request.auth.uid;
-      allow create: if isValidId(appointmentId) && isVerified() &&
+      allow get: if isValidId(appointmentId) && isActiveUser() && existing().userId == request.auth.uid;
+      allow list: if isActiveUser() && existing().userId == request.auth.uid;
+      allow create: if isValidId(appointmentId) && isActiveUser() &&
         isValidAppointment(incoming()) &&
         incoming().userId == request.auth.uid &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time;
-      allow update: if isValidId(appointmentId) && isVerified() &&
+      allow update: if isValidId(appointmentId) && isActiveUser() &&
         isValidAppointment(incoming()) &&
         incoming().userId == existing().userId &&
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time &&
         existing().userId == request.auth.uid;
-      allow delete: if isValidId(appointmentId) && isVerified() && existing().userId == request.auth.uid;
+      allow delete: if isValidId(appointmentId) && isActiveUser() && existing().userId == request.auth.uid;
     }
 
     // Ministry Team & Church Elders
     match /ministry_team/{memberId} {
-      allow get: if isValidId(memberId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
-      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
-      allow create: if isValidId(memberId) && isVerified() &&
+      allow get: if isValidId(memberId) && isActiveUser() && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isActiveUser() && (existing().userId == request.auth.uid || isAdmin());
+      allow create: if isValidId(memberId) && isActiveUser() &&
         isValidMinistryTeamMember(incoming()) &&
         incoming().userId == request.auth.uid &&
         exists(/databases/$(database)/documents/missions/$(incoming().missionId)) &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time;
-      allow update: if isValidId(memberId) && isVerified() &&
+      allow update: if isValidId(memberId) && isActiveUser() &&
         isValidMinistryTeamMember(incoming()) &&
         incoming().userId == existing().userId &&
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time &&
         (existing().userId == request.auth.uid || isAdmin());
-      allow delete: if isValidId(memberId) && isVerified() && (existing().userId == request.auth.uid || isAdmin());
+      allow delete: if isValidId(memberId) && isActiveUser() && (existing().userId == request.auth.uid || isAdmin());
     }
 
     // Personal To-Dos
     match /todos/{todoId} {
-      allow get: if isValidId(todoId) && isSignedIn() && existing().userId == request.auth.uid;
-      allow list: if isSignedIn() && existing().userId == request.auth.uid;
-      allow create: if isValidId(todoId) && isVerified() &&
+      allow get: if isValidId(todoId) && isActiveUser() && existing().userId == request.auth.uid;
+      allow list: if isActiveUser() && existing().userId == request.auth.uid;
+      allow create: if isValidId(todoId) && isActiveUser() &&
         isValidTodo(incoming()) &&
         incoming().userId == request.auth.uid &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time;
-      allow update: if isValidId(todoId) && isVerified() &&
+      allow update: if isValidId(todoId) && isActiveUser() &&
         isValidTodo(incoming()) &&
         incoming().userId == existing().userId &&
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time &&
         existing().userId == request.auth.uid;
-      allow delete: if isValidId(todoId) && isVerified() && existing().userId == request.auth.uid;
+      allow delete: if isValidId(todoId) && isActiveUser() && existing().userId == request.auth.uid;
     }
 
     // Personal / Local Events
     match /events/{eventId} {
-      allow get: if isValidId(eventId) && isSignedIn() && existing().userId == request.auth.uid;
-      allow list: if isSignedIn() && existing().userId == request.auth.uid;
-      allow create: if isValidId(eventId) && isVerified() &&
+      allow get: if isValidId(eventId) && isActiveUser() && existing().userId == request.auth.uid;
+      allow list: if isActiveUser() && existing().userId == request.auth.uid;
+      allow create: if isValidId(eventId) && isActiveUser() &&
         isValidEvent(incoming()) &&
         incoming().userId == request.auth.uid &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time;
-      allow update: if isValidId(eventId) && isVerified() &&
+      allow update: if isValidId(eventId) && isActiveUser() &&
         isValidEvent(incoming()) &&
         incoming().userId == existing().userId &&
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time &&
         existing().userId == request.auth.uid;
-      allow delete: if isValidId(eventId) && isVerified() && existing().userId == request.auth.uid;
+      allow delete: if isValidId(eventId) && isActiveUser() && existing().userId == request.auth.uid;
     }
 
     // Mission-Wide Global Events
     match /global_events/{eventId} {
-      allow get: if isValidId(eventId) && isSignedIn();
-      allow list: if isSignedIn() && existing().missionId is string;
+      allow get: if isValidId(eventId) && isActiveUser() && (isAdmin() || existing().missionId == callerMissionId());
+      allow list: if isActiveUser() && (isAdmin() || existing().missionId == callerMissionId());
       allow create: if isValidId(eventId) && isValidGlobalEvent(incoming()) &&
         isEditorInMission(incoming().missionId) &&
         incoming().createdBy == request.auth.uid &&
@@ -998,8 +1104,8 @@ service cloud.firestore {
 
     // Shared Resources
     match /resources/{resourceId} {
-      allow get: if isValidId(resourceId) && isSignedIn();
-      allow list: if isSignedIn() && existing().missionId is string;
+      allow get: if isValidId(resourceId) && isActiveUser() && (isAdmin() || existing().missionId == callerMissionId());
+      allow list: if isActiveUser() && (isAdmin() || existing().missionId == callerMissionId());
       allow create: if isValidId(resourceId) && isValidResource(incoming()) &&
         isEditorInMission(incoming().missionId) &&
         incoming().uploadedBy == request.auth.uid &&
@@ -1013,17 +1119,18 @@ service cloud.firestore {
 
     // Onboarding Location Requests
     match /locationRequests/{requestId} {
-      allow get: if isValidId(requestId) && isSignedIn() && (existing().userId == request.auth.uid || isMissionAdmin());
-      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isMissionAdmin());
+      allow get: if isValidId(requestId) && isSignedIn() && (existing().userId == request.auth.uid || isMissionAdminFor(existing().get('missionId', '')));
+      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isMissionAdminFor(existing().get('missionId', '')));
       allow create: if isValidId(requestId) && isVerified() &&
         isValidLocationRequest(incoming()) &&
         incoming().userId == request.auth.uid &&
         incoming().status == 'pending' &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time;
-      allow update: if isValidId(requestId) && isMissionAdmin() &&
+      allow update: if isValidId(requestId) && isMissionAdminFor(existing().get('missionId', '')) &&
         isValidLocationRequest(incoming()) &&
         incoming().userId == existing().userId &&
+        incoming().get('missionId', '') == existing().get('missionId', '') &&
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time;
       allow delete: if isValidId(requestId) && isAdmin();
@@ -1042,9 +1149,9 @@ service cloud.firestore {
 
     // Admin Activity Audit Log (Append-only)
     match /admin_activity/{activityId} {
-      allow get: if isValidId(activityId) && isMissionAdmin();
-      allow list: if isMissionAdmin() && existing().actorId is string;
-      allow create: if isValidId(activityId) && isMissionAdmin() &&
+      allow get: if isValidId(activityId) && isMissionAdminFor(existing().get('missionId', ''));
+      allow list: if isMissionAdminFor(existing().get('missionId', ''));
+      allow create: if isValidId(activityId) && isMissionAdminFor(incoming().get('missionId', '')) &&
         isValidAdminActivity(incoming()) &&
         incoming().actorId == request.auth.uid &&
         incoming().createdAt == request.time;

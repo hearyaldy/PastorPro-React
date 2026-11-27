@@ -1,8 +1,17 @@
+import { useHierarchyLabels } from '../hooks/useHierarchyLabels';
+import { hasAlias } from '../lib/missionReporting';
+import type { MissionReportContext } from '../components/MissionReportingDashboard';
+import { StatisticsCards } from '../components/StatisticsCards';
+import { ReportPreview } from '../components/ReportPreview';
+import { readFinancialReport } from '../lib/reportViews';
+import { financialDocument } from '../lib/reportDocuments';
+import type { PrintableReport } from '../lib/pdfReport';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   collection,
   doc,
   getDoc,
+  getDocs,
   onSnapshot,
   orderBy,
   query,
@@ -28,8 +37,8 @@ import {
   exportToExcel,
   formatCurrencyRM,
   MONTHS,
-  triggerPrintPdf,
 } from '../lib/exportUtils';
+import { missionQuery } from '../lib/queryScope';
 import { useToast } from '../components/Toast';
 import type {
   FamData,
@@ -51,22 +60,26 @@ const DEFAULT_FAM_EXPENSES: FamLineItem[] = [
   { name: 'Welfare & Dorcas Assistance', category: 'Community', amount: 0 },
 ];
 
-export function FinancialReportsPage() {
+export function FinancialReportsPage({ initialContext }: { initialContext?: MissionReportContext }) {
+  const labels = useHierarchyLabels();
   const { profile, capabilities } = useAuth();
-  const { churches, districts, regions } = useMission();
+  const { churches, districts, regions, missions } = useMission();
   const { notify } = useToast();
 
-  const [reports, setReports] = useState<FinancialReport[]>([]);
+  const [preview, setPreview] = useState<PrintableReport | null>(null);
+  const [storedReports, setReports] = useState<FinancialReport[]>([]);
+  const reports = useMemo(() => storedReports.map(report => labels.withNames(report)), [storedReports, labels]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'ledger' | 'all'>(
     capabilities.canAccessAllFinancialReports ? 'all' : 'ledger',
   );
 
+  const [contextFilter, setContextFilter] = useState(initialContext);
   // Filters
   const [regionFilter, setRegionFilter] = useState('all');
-  const [districtFilter, setDistrictFilter] = useState('all');
-  const [monthFilter, setMonthFilter] = useState('all');
-  const [yearFilter, setYearFilter] = useState('all');
+  const [districtFilter, setDistrictFilter] = useState(initialContext?.districtId || 'all');
+  const [monthFilter, setMonthFilter] = useState(initialContext ? String(initialContext.month) : 'all');
+  const [yearFilter, setYearFilter] = useState(initialContext ? String(initialContext.year) : 'all');
 
   // Editor Drawer State
   const [editorOpen, setEditorOpen] = useState(false);
@@ -96,7 +109,7 @@ export function FinancialReportsPage() {
     setLoading(true);
 
     const q = capabilities.canAccessAllFinancialReports
-      ? query(collection(db, 'financial_reports'), orderBy('year', 'desc'))
+      ? missionQuery(db, 'financial_reports', profile)
       : profile.userRole === 'church_treasurer' && profile.churchId
         ? query(
             collection(db, 'financial_reports'),
@@ -111,10 +124,8 @@ export function FinancialReportsPage() {
       q,
       (snap) => {
         const items = snap.docs
-          .map((d) => ({
-            id: d.id,
-            ...(d.data() as Omit<FinancialReport, 'id'>),
-          }))
+          .map((d) => readFinancialReport(d.id, d.data()))
+          .filter((item): item is FinancialReport => item !== null)
           .sort((a, b) => (b.year - a.year) || (b.month - a.month));
         setReports(items);
         setLoading(false);
@@ -132,13 +143,15 @@ export function FinancialReportsPage() {
       if (activeTab === 'ledger' && profile?.churchId && r.churchId !== profile.churchId) {
         if (r.submittedBy !== profile.uid) return false;
       }
+      if (contextFilter?.churchId && r.churchId !== contextFilter.churchId) return false;
+      if (contextFilter?.missionId) { const mission = missions.find(item => item.id === contextFilter.missionId); if (mission ? !hasAlias(r.missionId, mission) : r.missionId !== contextFilter.missionId) return false; }
       if (regionFilter !== 'all' && r.regionId !== regionFilter) return false;
       if (districtFilter !== 'all' && r.districtId !== districtFilter) return false;
       if (monthFilter !== 'all' && String(r.month) !== monthFilter) return false;
       if (yearFilter !== 'all' && String(r.year) !== yearFilter) return false;
       return true;
     });
-  }, [reports, activeTab, profile, regionFilter, districtFilter, monthFilter, yearFilter]);
+  }, [reports, activeTab, profile, contextFilter, missions, regionFilter, districtFilter, monthFilter, yearFilter]);
 
   const totalIncomeCalc =
     Number(tithe || 0) +
@@ -170,6 +183,10 @@ export function FinancialReportsPage() {
   };
 
   const openEditReport = async (rep: FinancialReport) => {
+    if (rep.sourceData && typeof rep.sourceData.month !== 'number') {
+      notify('Edit this report in the Flutter app for now. You can preview, download, and print it here.', 'info');
+      return;
+    }
     setEditingReport(rep);
     setChurchId(rep.churchId);
     setYear(rep.year);
@@ -298,6 +315,7 @@ export function FinancialReportsPage() {
       Period: `${MONTHS[(r.month || 1) - 1]} ${r.year}`,
       Status: r.status,
       TitheRM: r.tithe,
+      OfferingsRM: r.offerings || 0,
       CombinedBudgetRM: r.combinedBudget,
       MissionOfferingRM: r.missionOffering,
       LocalOfferingRM: r.localChurchOffering,
@@ -315,13 +333,37 @@ export function FinancialReportsPage() {
     (acc, r) => ({
       tithe: acc.tithe + (r.tithe || 0),
       income: acc.income + (r.totalIncome || 0),
+      offerings: acc.offerings + (r.offerings || 0),
+      special: acc.special + (r.specialOfferings || 0),
       expense: acc.expense + (r.totalExpense || 0),
     }),
-    { tithe: 0, income: 0, expense: 0 },
+    { tithe: 0, income: 0, expense: 0, offerings: 0, special: 0 },
   );
+
+  const previewFinancial = async (report: FinancialReport) => {
+    try {
+      const fam = await getDocs(query(collection(db, 'fam_data'), where('reportId', '==', report.id)));
+      if (fam.size > 1) { notify('Multiple FAM records are linked to this report. Please review them before printing.', 'error'); return; }
+      const document = financialDocument({ ...report, churchName: labels.church(report.churchId, report.churchName) }, fam.docs[0]?.data() || null);
+      if (fam.empty) document.sections.push({ title: 'FAM Breakdown', text: 'No linked FAM details were found for this report.' });
+      setPreview(document);
+    } catch (error) {
+      reportListenerError(error, OperationType.LIST, 'fam_data');
+      notify('Unable to load FAM details. Check your access and connection before printing.', 'error');
+    }
+  };
+  const previewLedger = () => setPreview({
+    title: 'Church Financial Reports', subtitle: `${filteredReports.length} filtered reports`, filename: 'Financial_Reports_Ledger', orientation: 'landscape',
+    metadata: [['Region', regionFilter], ['District', districtFilter], ['Month', monthFilter === 'all' ? 'All Months' : MONTHS[Number(monthFilter) - 1]], ['Year', yearFilter]],
+    summary: [['Tithe', formatCurrencyRM(summary.tithe)], ['Offerings', formatCurrencyRM(summary.offerings)], ['Special Offerings', formatCurrencyRM(summary.special)], ['TOTAL', formatCurrencyRM(summary.income)]],
+    sections: [{ title: 'Financial Reports', columns: ['Church', 'Period', 'Status', 'Tithe (RM)', 'Offerings (RM)', 'Special (RM)', 'Total (RM)'],
+      rows: filteredReports.map(report => [labels.church(report.churchId, report.churchName), `${MONTHS[report.month - 1]} ${report.year}`, report.status === 'verified' ? 'Approved' : report.status, report.tithe.toFixed(2), (report.offerings || 0).toFixed(2), (report.specialOfferings || 0).toFixed(2), report.totalIncome.toFixed(2)]),
+      totals: ['TOTAL', '', '', summary.tithe.toFixed(2), summary.offerings.toFixed(2), summary.special.toFixed(2), summary.income.toFixed(2)] }],
+  });
 
   return (
     <div className="space-y-6">
+      {contextFilter && <div className="rounded-lg border border-[var(--border-hairline)] p-3 text-sm flex flex-wrap gap-3 items-center"><p>Opened from My Mission · {contextFilter.churchId ? labels.church(contextFilter.churchId) : labels.mission(contextFilter.missionId)} · {MONTHS[contextFilter.month - 1]} {contextFilter.year}</p><button className="underline" onClick={() => { setContextFilter(undefined); setDistrictFilter('all'); setMonthFilter('all'); setYearFilter('all'); }}>Clear reporting context</button></div>}
       {/* Top Tabs & Actions */}
       <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 no-print">
         <div className="flex flex-wrap items-center gap-3">
@@ -433,7 +475,7 @@ export function FinancialReportsPage() {
           </button>
           <button
             type="button"
-            onClick={triggerPrintPdf}
+            onClick={previewLedger}
             className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)]"
           >
             <Printer className="w-3.5 h-3.5" />
@@ -453,26 +495,13 @@ export function FinancialReportsPage() {
       </div>
 
       {/* Totals Strip */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] divide-y sm:divide-y-0 sm:divide-x divide-[var(--border-hairline)]">
-        <div className="px-5 py-4">
-          <div className="text-xs text-[var(--text-muted)]">Aggregate Tithe</div>
-          <div className="text-xl font-mono-tabular font-semibold mt-1">
-            {formatCurrencyRM(summary.tithe)}
-          </div>
-        </div>
-        <div className="px-5 py-4">
-          <div className="text-xs text-[var(--text-muted)]">Total Gross Income</div>
-          <div className="text-xl font-mono-tabular font-semibold mt-1">
-            {formatCurrencyRM(summary.income)}
-          </div>
-        </div>
-        <div className="px-5 py-4">
-          <div className="text-xs text-[var(--text-muted)]">Total FAM Expenses</div>
-          <div className="text-xl font-mono-tabular font-semibold mt-1">
-            {formatCurrencyRM(summary.expense)}
-          </div>
-        </div>
-      </div>
+      <StatisticsCards featured items={[
+        { label: 'Total Financial', value: formatCurrencyRM(summary.income), icon: 'money' },
+        { label: 'Tithe', value: formatCurrencyRM(summary.tithe), icon: 'money' },
+        { label: 'Offerings', value: formatCurrencyRM(summary.offerings), icon: 'money' },
+        { label: 'Special Offerings', value: formatCurrencyRM(summary.special), icon: 'money' },
+      ]} />
+      {preview && <ReportPreview report={preview} onClose={() => setPreview(null)} />}
 
       {/* Financial Ledger Table */}
       <div className="border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] overflow-hidden print-sheet">
@@ -545,10 +574,11 @@ export function FinancialReportsPage() {
                       {formatCurrencyRM(r.totalIncome)}
                     </td>
                     <td className="py-3 px-4 text-right font-mono-tabular text-[var(--text-secondary)]">
-                      {formatCurrencyRM(r.totalExpense)}
+                      {r.sourceData && !('totalExpense' in r.sourceData) ? '—' : formatCurrencyRM(r.totalExpense)}
                     </td>
                     <td className="py-3 px-4 text-right whitespace-nowrap no-print">
                       <div className="inline-flex items-center gap-2">
+                        <button type="button" onClick={() => void previewFinancial(r)} className="p-1.5 rounded hover:bg-[var(--bg-subtle)]" aria-label="Preview financial report"><Printer size={15} /></button>
                         <button
                           type="button"
                           onClick={() => setHistoryDrawer(r)}

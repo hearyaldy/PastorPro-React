@@ -1,0 +1,8 @@
+{
+  "project": "pastor-report-e4c52",
+  "release": "cloud.firestore",
+  "observedReleaseUpdateTime": "2026-06-30T09:52:58.562971Z",
+  "baselineSha256": "c6058e8db391018f0e3b228e0f0b3eba92c25320dd63d7266e31de5c3cadb98a",
+  "candidateSha256": "637fc787de6233e17550e825f672980678f977cc33111bb9cec3c6f356b4f71b",
+  "status": "Prepared, not deployed"
+}

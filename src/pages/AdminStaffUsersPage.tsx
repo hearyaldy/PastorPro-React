@@ -1,3 +1,4 @@
+import { useHierarchyLabels } from '../hooks/useHierarchyLabels';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   addDoc,
@@ -17,9 +18,10 @@ import { Check, Plus, Search, Trash2, Upload, XCircle } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useMission } from '../contexts/MissionContext';
 import { db, handleFirestoreError, OperationType, reportListenerError } from '../lib/firebase';
+import { readUserProfile, writeUserUpdates } from '../lib/userProfiles';
+import { missionQuery } from '../lib/queryScope';
 import { useToast } from '../components/Toast';
 import {
-  normalizeUserRole,
   ROLE_META,
   type AdminActivityLog,
   type LocationRequest,
@@ -28,6 +30,7 @@ import {
 } from '../types';
 
 export function AdminStaffUsersPage() {
+  const labels = useHierarchyLabels();
   const { profile } = useAuth();
   const { missions, regions, districts, churches, staff, logAdminActivity } = useMission();
   const { notify } = useToast();
@@ -49,27 +52,10 @@ export function AdminStaffUsersPage() {
     if (!profile) return;
     const unsubs = [
       onSnapshot(
-        collection(db, 'users'),
+        missionQuery(db, 'users', profile),
         (snap) => {
           const items = snap.docs
-            .map((d) => {
-              const raw = d.data() as Record<string, unknown>;
-              const userRole = normalizeUserRole(raw);
-              return {
-                ...(raw as unknown as UserProfile),
-                uid: d.id,
-                email: String(raw.email || ''),
-                displayName: String(raw.displayName || raw.name || raw.email || d.id),
-                userRole,
-                role: raw.role ? String(raw.role) : userRole,
-                roleTitle: raw.roleTitle ? String(raw.roleTitle) : ROLE_META[userRole].label,
-                level: typeof raw.level === 'number' ? raw.level : ROLE_META[userRole].level,
-                missionId: String(raw.missionId || raw.mission || ''),
-                districtId: String(raw.districtId || raw.district || ''),
-                isActive: raw.isActive !== false,
-                onboardingCompleted: Boolean(raw.onboardingCompleted),
-              };
-            })
+            .map((d) => readUserProfile(d.id, d.data()))
             .sort((a, b) => String(a.displayName || '').localeCompare(String(b.displayName || '')));
           setUsers(items);
           setUsersError(null);
@@ -79,7 +65,7 @@ export function AdminStaffUsersPage() {
         },
       ),
       onSnapshot(
-        query(collection(db, 'locationRequests'), orderBy('createdAt', 'desc')),
+        query(missionQuery(db, 'locationRequests', profile), orderBy('createdAt', 'desc')),
         (snap) => {
           setRequests(
             snap.docs.map((d) => ({
@@ -93,7 +79,7 @@ export function AdminStaffUsersPage() {
         },
       ),
       onSnapshot(
-        query(collection(db, 'admin_activity'), orderBy('createdAt', 'desc'), limit(50)),
+        query(missionQuery(db, 'admin_activity', profile), orderBy('createdAt', 'desc'), limit(50)),
         (snap) => {
           setAuditLogs(
             snap.docs.map((d) => ({
@@ -128,10 +114,10 @@ export function AdminStaffUsersPage() {
       return (
         u.displayName.toLowerCase().includes(s) ||
         u.email.toLowerCase().includes(s) ||
-        (u.districtName || '').toLowerCase().includes(s)
+        labels.district(u.districtId, u.districtName).toLowerCase().includes(s)
       );
     });
-  }, [users, search]);
+  }, [users, search, labels]);
 
   const handleUpdateUser = async (
     target: UserProfile,
@@ -140,7 +126,7 @@ export function AdminStaffUsersPage() {
   ) => {
     try {
       await updateDoc(doc(db, 'users', target.uid), {
-        ...updates,
+        ...writeUserUpdates(updates, target),
         updatedAt: serverTimestamp(),
       });
       await logAdminActivity('UPDATE_USER', 'users', summary, target.uid);
@@ -552,7 +538,7 @@ export function AdminStaffUsersPage() {
                       {s.position}
                     </td>
                     <td className="py-3 px-4 text-xs text-[var(--text-secondary)]">
-                      {districts.find((d) => d.id === s.districtId)?.name || 'Mission Office'}
+                      {labels.district(s.districtId, undefined, s.districtId ? 'District name unavailable' : 'Mission Office')}
                     </td>
                     <td className="py-3 px-4 text-xs text-[var(--text-muted)]">
                       {s.email || '—'}
@@ -600,7 +586,7 @@ export function AdminStaffUsersPage() {
                   </div>
                   <div className="text-xs text-[var(--text-secondary)]">
                     Requested by {req.userName} ({req.userEmail}) · Region:{' '}
-                    {req.regionName || '—'} · District: {req.districtName || '—'}
+                    {labels.region(undefined, req.regionName, 'Region name unavailable')} · District: {labels.district(undefined, req.districtName, 'District name unavailable')}
                   </div>
                   {req.notes && (
                     <div className="text-xs text-[var(--text-muted)]">{req.notes}</div>

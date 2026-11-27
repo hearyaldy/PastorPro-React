@@ -1,710 +1,110 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import {
-  collection,
-  doc,
-  getDoc,
-  onSnapshot,
-  orderBy,
-  query,
-  serverTimestamp,
-  setDoc,
-  where,
-} from 'firebase/firestore';
-import { Download, Eye, Printer, Save, Send, X } from 'lucide-react';
+import { departmentFormBlocker } from '../lib/departmentFormAccess';
+import { useMemo, useRef, useState } from 'react';
+import { FileText, Plus, RefreshCw, Settings2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useMission } from '../contexts/MissionContext';
-import { db, handleFirestoreError, OperationType, reportListenerError } from '../lib/firebase';
-import {
-  exportToCsv,
-  exportToExcel,
-  formatCurrencyRM,
-  triggerPrintPdf,
-} from '../lib/exportUtils';
-import { useToast } from '../components/Toast';
-import type { DepartmentType, QuarterlyDepartmentReport } from '../types';
+import { useHierarchyLabels } from '../hooks/useHierarchyLabels';
+import { useDepartmentData } from '../hooks/useDepartmentData';
+import { DepartmentForm } from '../components/department/DepartmentForm';
+import { DepartmentTemplateEditor } from '../components/department/DepartmentTemplateEditor';
+import { ReportPreview } from '../components/ReportPreview';
+import { ReportTables } from '../components/ReportTables';
+import { aggregateDepartment, answerRows, departmentExportRows, defaultDepartmentTemplates, departmentAnswers, departmentDocument, departmentKey, reportTemplate, validateTemplate, type DepartmentTemplate } from '../lib/departmentReports';
+import { findDepartmentReports, saveDepartmentReport, saveDepartmentTemplate } from '../lib/departmentStorage';
+import { quarterlyDocument } from '../lib/reportDocuments';
+import { auth, db } from '../lib/firebase';
+import firebaseConfig from '../../firebase-applet-config.json';
+import { exportToCsv, exportToExcel } from '../lib/exportUtils';
+import { hasAlias, assignedMission } from '../lib/missionReporting';
+import type { PrintableReport } from '../lib/pdfReport';
+import type { QuarterlyDepartmentReport } from '../types';
 
-const DEPT_CONFIG: Record<
-  DepartmentType,
-  {
-    label: string;
-    subtitle: string;
-    fields: { key: string; label: string; isCurrency?: boolean }[];
-  }
-> = {
-  kanak_kanak: {
-    label: 'Kanak-Kanak (Children’s Ministry)',
-    subtitle: 'Age-band demographics, APTA families, KID enrollment, and family worship',
-    fields: [
-      { key: 'age0to4', label: 'Ages 0–4 (Beginners)' },
-      { key: 'age5to6', label: 'Ages 5–6 (Kindergarten)' },
-      { key: 'age7to9', label: 'Ages 7–9 (Primary)' },
-      { key: 'age10to12', label: 'Ages 10–12 (Juniors)' },
-      { key: 'aptaFamilies', label: 'APTA Registered Families' },
-      { key: 'kidEnrolled', label: 'KID Curriculum Enrolled' },
-      { key: 'regularFamilyWorship', label: 'Regular Family Worship Homes' },
-      { key: 'vbsHeld', label: 'VBS / Children’s Programs Held' },
-    ],
-  },
-  penatalayanan: {
-    label: 'Penatalayanan (Stewardship)',
-    subtitle: 'Borang AP 3-month tithe/offering totals & Borang BP leader/employment metrics',
-    fields: [
-      { key: 'borangApMonth1Tithe', label: 'Borang AP Month 1 Tithe (RM)', isCurrency: true },
-      { key: 'borangApMonth1Offering', label: 'Borang AP Month 1 Offering (RM)', isCurrency: true },
-      { key: 'borangApMonth2Tithe', label: 'Borang AP Month 2 Tithe (RM)', isCurrency: true },
-      { key: 'borangApMonth2Offering', label: 'Borang AP Month 2 Offering (RM)', isCurrency: true },
-      { key: 'borangApMonth3Tithe', label: 'Borang AP Month 3 Tithe (RM)', isCurrency: true },
-      { key: 'borangApMonth3Offering', label: 'Borang AP Month 3 Offering (RM)', isCurrency: true },
-      { key: 'stewardshipLeaders', label: 'Borang BP Stewardship Leaders' },
-      { key: 'employedMembers', label: 'Employed Members' },
-      { key: 'selfEmployedMembers', label: 'Self-Employed / Farmers' },
-      { key: 'retiredOrStudentMembers', label: 'Retired / Student Members' },
-      { key: 'stewardshipSeminars', label: 'Stewardship Seminars Conducted' },
-      { key: 'faithfulnessVisitations', label: 'Faithfulness Visitations' },
-    ],
-  },
-  sspm: {
-    label: 'SSPM (Sabbath School & Personal Ministries)',
-    subtitle: 'Sabbath School division attendance, Bible study groups, and outreach',
-    fields: [
-      { key: 'sabbathSchoolAdultAttendance', label: 'Adult Sabbath School Avg Attendance' },
-      { key: 'sabbathSchoolYouthAttendance', label: 'Youth Sabbath School Avg Attendance' },
-      { key: 'sabbathSchoolChildrenAttendance', label: 'Children Division Avg Attendance' },
-      { key: 'activeBibleStudyGroups', label: 'Active Action Units / Study Groups' },
-      { key: 'smallGroupOutreachContacts', label: 'Small Group Outreach Contacts' },
-      { key: 'literatureDistributed', label: 'Tracts & Books Distributed' },
-      { key: 'baptismalInterests', label: 'New Baptismal Interests' },
-      { key: 'communityBibleStudies', label: 'Community Bible Studies Given' },
-    ],
-  },
-  wanita: {
-    label: 'Wanita (Women’s Ministry)',
-    subtitle: 'Women’s membership, fellowship attendance, welfare outreach, and retreats',
-    fields: [
-      { key: 'activeWomenMembers', label: 'Active Women Members' },
-      { key: 'regularFellowshipAttendance', label: 'Regular Fellowship Attendance' },
-      { key: 'prayerGroupMeetings', label: 'Women’s Prayer Group Meetings' },
-      { key: 'communityWelfarePrograms', label: 'Community Welfare Programs' },
-      { key: 'leadershipWorkshops', label: 'Leadership & Health Workshops' },
-      { key: 'devotionalRetreats', label: 'Devotional Retreats Held' },
-      { key: 'familiesAssisted', label: 'Families Assisted' },
-    ],
-  },
-};
-
-export function QuarterlyDepartmentsPage() {
-  const { profile, capabilities } = useAuth();
-  const { churches, districts } = useMission();
-  const { notify } = useToast();
-
-  const now = new Date();
-  const currentQuarter = (Math.floor(now.getMonth() / 3) + 1) as 1 | 2 | 3 | 4;
-
-  const [activeTab, setActiveTab] = useState<'browser' | 'submit'>(
-    capabilities.canSubmitDepartmentReports ? 'submit' : 'browser',
-  );
-
-  // Shared stream of quarterly reports
-  const [reports, setReports] = useState<QuarterlyDepartmentReport[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  // Submission Form state
-  const [formChurchId, setFormChurchId] = useState(profile?.churchId || '');
-  const [formYear, setFormYear] = useState(now.getFullYear());
-  const [formQuarter, setFormQuarter] = useState<1 | 2 | 3 | 4>(currentQuarter);
-  const [formDept, setFormDept] = useState<DepartmentType>('kanak_kanak');
-  const [payload, setPayload] = useState<Record<string, number>>({});
-  const [notes, setNotes] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [existingCreatedAt, setExistingCreatedAt] = useState<unknown>(null);
-
-  // Browser filters
-  const [filterDistrict, setFilterDistrict] = useState('all');
-  const [filterDept, setFilterDept] = useState<string>('all');
-  const [filterYear, setFilterYear] = useState<string>(String(now.getFullYear()));
-  const [filterQuarter, setFilterQuarter] = useState<string>('all');
-  const [inspectReport, setInspectReport] = useState<QuarterlyDepartmentReport | null>(null);
-
-  const scopedChurches = useMemo(() => {
-    if (
-      profile?.userRole === 'district_pastor' &&
-      profile.districtId
-    ) {
-      return churches.filter((c) => c.districtId === profile.districtId);
-    }
-    return churches;
-  }, [churches, profile]);
-
-  useEffect(() => {
-    if (!formChurchId && scopedChurches.length > 0) {
-      setFormChurchId(scopedChurches[0].id);
-    }
-  }, [scopedChurches, formChurchId]);
-
-  useEffect(() => {
-    if (!profile) return;
-    setLoading(true);
-    const q = capabilities.canAccessAllFinancialReports
-      ? query(collection(db, 'quarterly_department_reports'), orderBy('year', 'desc'))
-      : profile.districtId
-        ? query(
-            collection(db, 'quarterly_department_reports'),
-            where('districtId', '==', profile.districtId),
-          )
-        : query(
-            collection(db, 'quarterly_department_reports'),
-            where('submittedBy', '==', profile.uid),
-          );
-
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        const items = snap.docs
-          .map((d) => ({
-            id: d.id,
-            ...(d.data() as Omit<QuarterlyDepartmentReport, 'id'>),
-          }))
-          .sort((a, b) => (b.year - a.year) || (b.quarter - a.quarter));
-        setReports(items);
-        setLoading(false);
-      },
-      (err) => {
-        setLoading(false);
-        reportListenerError(err, OperationType.LIST, 'quarterly_department_reports');
-      },
-    );
-    return () => unsub();
-  }, [profile, capabilities.canAccessAllFinancialReports]);
-
-  // Deterministic document ID: {churchId}_{year}_Q{quarter}_{department}
-  const deterministicId = formChurchId
-    ? `${formChurchId}_${formYear}_Q${formQuarter}_${formDept}`
-    : '';
-
-  useEffect(() => {
-    if (!deterministicId) return;
-    getDoc(doc(db, 'quarterly_department_reports', deterministicId))
-      .then((snap) => {
-        if (snap.exists()) {
-          const data = snap.data() as QuarterlyDepartmentReport;
-          setPayload(data.payload || {});
-          setNotes(data.notes || '');
-          setExistingCreatedAt(data.createdAt || null);
-        } else {
-          setPayload({});
-          setNotes('');
-          setExistingCreatedAt(null);
-        }
-      })
-      .catch((err) =>
-        reportListenerError(
-          err,
-          OperationType.GET,
-          `quarterly_department_reports/${deterministicId}`,
-        ),
-      );
-  }, [deterministicId]);
-
-  const handleSaveQuarterly = async (submitStatus: 'draft' | 'submitted') => {
-    if (!profile || !deterministicId) return;
-    const church = churches.find((c) => c.id === formChurchId);
-    if (!church) {
-      notify('Please select a church.', 'error');
-      return;
-    }
-
-    setSaving(true);
-    const district = districts.find((d) => d.id === church.districtId);
-
-    const sanitizedPayload: Record<string, number> = {};
-    for (const f of DEPT_CONFIG[formDept].fields) {
-      sanitizedPayload[f.key] = Math.max(0, Number(payload[f.key] || 0));
-    }
-
+export function QuarterlyDepartmentsPage({ adminMode = false, onManage }: { adminMode?: boolean; onManage?: () => void }) {
+  const { profile } = useAuth();
+  const { missions, districts, churches } = useMission();
+  const labels = useHierarchyLabels();
+  const [refresh, setRefresh] = useState(0), [view, setView] = useState<'forms' | 'responses' | 'settings'>('forms');
+  const data = useDepartmentData(profile, refresh);
+  const [year, setYear] = useState(new Date().getFullYear()), [quarter, setQuarter] = useState(Math.floor(new Date().getMonth() / 3) + 1);
+  const [churchId, setChurchId] = useState(adminMode ? '' : profile?.churchId || ''), [districtId, setDistrictId] = useState('all'), [missionId, setMissionId] = useState(''), [search, setSearch] = useState(''), [templateKey, setTemplateKey] = useState('all');
+  const [editor, setEditor] = useState<DepartmentTemplate | null>(null), [form, setForm] = useState<{ template: DepartmentTemplate; existing: QuarterlyDepartmentReport | null; churchId: string } | null>(null);
+  const [preview, setPreview] = useState<PrintableReport | null>(null), [inspect, setInspect] = useState<QuarterlyDepartmentReport | null>(null);
+  const [error, setError] = useState(''), [busy, setBusy] = useState(false);
+  const admin = !!profile?.isActive && ['super_admin', 'admin'].includes(profile.userRole);
+  const canFill = !!profile?.isActive && (admin || profile.userRole === 'district_pastor');
+  const ownMission = profile ? assignedMission(profile, missions) : null;
+  const scopeMission = admin ? missions.find(item => item.id === missionId) : ownMission;
+  const scopeDistrict = districts.find(item => item.id === (profile?.userRole === 'district_pastor' ? profile.districtId : districtId)) || districts.find(item => profile?.userRole === 'district_pastor' && hasAlias(profile.districtId, item));
+  const scopedChurches = churches.filter(church => (!scopeMission || hasAlias(church.missionId, scopeMission)) && (profile?.userRole !== 'district_pastor' || (scopeDistrict && hasAlias(church.districtId, scopeDistrict))) && (districtId === 'all' || church.districtId === districtId));
+  const selectedChurch = scopedChurches.find(item => item.id === churchId);
+  const churchSelect = useRef<HTMLSelectElement>(null);
+  const formAccess = { profile, churchId: selectedChurch?.id, churchCount: scopedChurches.length, districtAssigned: !!scopeDistrict,
+    busy, templatesLoading: data.templatesLoading, reportsLoading: data.reportsLoading, templateError: data.templateError, reportError: data.reportError };
+  const formBlocker = departmentFormBlocker(formAccess);
+  const templates = data.templates;
+  const activeTemplates = templates.filter(template => template.isActive);
+  const reports = useMemo(() => data.reports.map(report => labels.withNames(report)), [data.reports, labels]);
+  const filtered = reports.filter(report => report.year === year && report.quarter === quarter && (!scopeMission || hasAlias(report.missionId, scopeMission)) && (districtId === 'all' || report.districtId === districtId) && (!churchId || report.churchId === churchId) && (templateKey === 'all' || departmentKey(report.department) === templateKey) && `${report.churchName} ${report.districtName} ${report.sourceData?.departmentName || report.department} ${report.submittedByName || ''}`.toLowerCase().includes(search.toLowerCase()));
+  const responseDocument = (report: QuarterlyDepartmentReport) => {
+    const template = reportTemplate(report, templates);
+    if (template) return departmentDocument(report, template);
+    const legacy = quarterlyDocument(report, String(report.sourceData?.departmentName || report.department || 'Archived department report'));
+    if (report.sourceData?.values) legacy.sections.push({ title: 'Recorded answers (form definition unavailable)', rows: Object.entries(departmentAnswers(report)).map(([key, value]) => [key.replace(/([A-Z])/g, ' $1'), typeof value === 'object' ? JSON.stringify(value) : String(value)]) });
+    return legacy;
+  };
+  const openForm = async (template: DepartmentTemplate, existing?: QuarterlyDepartmentReport) => {
+    const church = existing ? scopedChurches.find(item => item.id === existing.churchId) : selectedChurch;
+    const blocker = departmentFormBlocker({ ...formAccess, churchId: church?.id, template });
+    if (blocker || !profile || !church) { setError(blocker?.message || 'Select a church first.'); return; }
+    setBusy(true); setError('');
     try {
-      await setDoc(
-        doc(db, 'quarterly_department_reports', deterministicId),
-        {
-          missionId: church.missionId,
-          regionId: church.regionId,
-          districtId: church.districtId,
-          churchId: church.id,
-          churchName: church.name,
-          districtName: district?.name || '',
-          department: formDept,
-          year: formYear,
-          quarter: formQuarter,
-          submittedBy: profile.uid,
-          submittedByName: profile.displayName,
-          status: submitStatus,
-          payload: sanitizedPayload,
-          notes: notes.trim().slice(0, 2000),
-          createdAt: existingCreatedAt || serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        },
-        { merge: true },
-      );
-      notify(
-        `${DEPT_CONFIG[formDept].label} Q${formQuarter} ${formYear} ${
-          submitStatus === 'submitted' ? 'submitted' : 'saved as draft'
-        }.`,
-        'success',
-      );
-    } catch (err) {
-      handleFirestoreError(
-        err,
-        OperationType.WRITE,
-        `quarterly_department_reports/${deterministicId}`,
-      );
-    } finally {
-      setSaving(false);
-    }
+      const matches = await findDepartmentReports(db, church.id, year, quarter, template.key);
+      if (matches.length > 1 && !existing) { setError('Multiple saved responses exist. Open the exact response from the Responses tab.'); setView('responses'); return; }
+      const record = existing ? matches.find(item => item.id === existing.id) : matches[0] || null;
+      if (existing && !record) throw new Error('This response changed or was removed. Refresh before editing.');
+      setForm({ template, existing: record || null, churchId: church.id });
+    } catch (err) { setError(err instanceof Error ? err.message : 'Unable to load this response. Check your reporting permissions.'); } finally { setBusy(false); }
   };
-
-  const filteredBrowserReports = useMemo(() => {
-    return reports.filter((r) => {
-      if (filterDistrict !== 'all' && r.districtId !== filterDistrict) return false;
-      if (filterDept !== 'all' && r.department !== filterDept) return false;
-      if (filterYear !== 'all' && String(r.year) !== filterYear) return false;
-      if (filterQuarter !== 'all' && String(r.quarter) !== filterQuarter) return false;
-      return true;
-    });
-  }, [reports, filterDistrict, filterDept, filterYear, filterQuarter]);
-
-  const handleExport = (fmt: 'csv' | 'xlsx') => {
-    const rows = filteredBrowserReports.map((r) => ({
-      Church: r.churchName,
-      District: r.districtName || r.districtId,
-      Department: DEPT_CONFIG[r.department]?.label || r.department,
-      Period: `Q${r.quarter} ${r.year}`,
-      Status: r.status,
-      SubmittedBy: r.submittedByName || r.submittedBy,
-      ...r.payload,
-    }));
-    if (fmt === 'csv') exportToCsv('quarterly_department_reports', rows);
-    else exportToExcel('quarterly_department_reports', [{ name: 'Quarterly Reports', rows }]);
-    notify(`Exported ${rows.length} quarterly department reports.`, 'success');
-  };
-
-  const currentConfig = DEPT_CONFIG[formDept];
-  const penatalayananApTotal =
-    formDept === 'penatalayanan'
-      ? Number(payload.borangApMonth1Tithe || 0) +
-        Number(payload.borangApMonth1Offering || 0) +
-        Number(payload.borangApMonth2Tithe || 0) +
-        Number(payload.borangApMonth2Offering || 0) +
-        Number(payload.borangApMonth3Tithe || 0) +
-        Number(payload.borangApMonth3Offering || 0)
-      : 0;
-
-  return (
-    <div className="space-y-6">
-      {/* Top Mode Switcher */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 no-print">
-        <div className="inline-flex p-1 rounded-lg bg-[var(--bg-subtle)] border border-[var(--border-hairline)] self-start">
-          {capabilities.canSubmitDepartmentReports && (
-            <button
-              type="button"
-              onClick={() => setActiveTab('submit')}
-              className={`px-3.5 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                activeTab === 'submit'
-                  ? 'bg-[var(--bg-surface)] text-[var(--text-primary)] shadow-xs'
-                  : 'text-[var(--text-secondary)]'
-              }`}
-            >
-              Submit Quarterly Report
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={() => setActiveTab('browser')}
-            className={`px-3.5 py-1.5 text-xs font-medium rounded-md transition-colors ${
-              activeTab === 'browser'
-                ? 'bg-[var(--bg-surface)] text-[var(--text-primary)] shadow-xs'
-                : 'text-[var(--text-secondary)]'
-            }`}
-          >
-            Read-Only Report Browser
-          </button>
-        </div>
-
-        <div className="text-xs text-[var(--text-muted)]">
-          Central Data Schema · Kanak-Kanak, Penatalayanan, SSPM & Wanita
-        </div>
-      </div>
-
-      {/* TAB 1: SUBMISSION FORM */}
-      {activeTab === 'submit' && capabilities.canSubmitDepartmentReports && (
-        <div className="border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] p-6 md:p-8 space-y-6">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pb-6 border-b border-[var(--border-hairline)]">
-            <div>
-              <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
-                Church
-              </label>
-              <select
-                value={formChurchId}
-                onChange={(e) => setFormChurchId(e.target.value)}
-                className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)]"
-              >
-                {scopedChurches.length === 0 && (
-                  <option value="">No churches available</option>
-                )}
-                {scopedChurches.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
-                Department
-              </label>
-              <select
-                value={formDept}
-                onChange={(e) => setFormDept(e.target.value as DepartmentType)}
-                className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)]"
-              >
-                {Object.entries(DEPT_CONFIG).map(([key, cfg]) => (
-                  <option key={key} value={key}>
-                    {cfg.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
-                Quarter
-              </label>
-              <select
-                value={formQuarter}
-                onChange={(e) => setFormQuarter(Number(e.target.value) as 1 | 2 | 3 | 4)}
-                className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)] font-mono-tabular"
-              >
-                <option value={1}>Q1 (Jan – Mar)</option>
-                <option value={2}>Q2 (Apr – Jun)</option>
-                <option value={3}>Q3 (Jul – Sep)</option>
-                <option value={4}>Q4 (Oct – Dec)</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
-                Year
-              </label>
-              <select
-                value={formYear}
-                onChange={(e) => setFormYear(Number(e.target.value))}
-                className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)] font-mono-tabular"
-              >
-                {[now.getFullYear() - 1, now.getFullYear(), now.getFullYear() + 1].map((y) => (
-                  <option key={y} value={y}>
-                    {y}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-            <div>
-              <h2 className="text-base font-display font-semibold">
-                {currentConfig.label}
-              </h2>
-              <p className="text-xs text-[var(--text-secondary)] mt-0.5">
-                {currentConfig.subtitle}
-              </p>
-            </div>
-            <div className="text-xs font-mono-tabular text-[var(--text-muted)]">
-              ID: {deterministicId || '—'}
-            </div>
-          </div>
-
-          {formDept === 'penatalayanan' && (
-            <div className="p-4 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-subtle)] flex items-center justify-between">
-              <span className="text-xs font-medium text-[var(--text-secondary)]">
-                Combined Borang AP 3-Month Tithe & Offering Total
-              </span>
-              <span className="text-base font-mono-tabular font-semibold">
-                {formatCurrencyRM(penatalayananApTotal)}
-              </span>
-            </div>
-          )}
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {currentConfig.fields.map((field) => (
-              <div
-                key={field.key}
-                className="p-3.5 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)]"
-              >
-                <label className="block text-xs text-[var(--text-secondary)] mb-1.5">
-                  {field.label}
-                </label>
-                <input
-                  type="number"
-                  min={0}
-                  step={field.isCurrency ? '0.01' : '1'}
-                  value={payload[field.key] ?? 0}
-                  onChange={(e) =>
-                    setPayload((prev) => ({
-                      ...prev,
-                      [field.key]: Number(e.target.value),
-                    }))
-                  }
-                  className="w-full px-3 py-1.5 text-sm font-mono-tabular font-semibold rounded border border-[var(--border-hairline)] bg-[var(--bg-surface)]"
-                />
-              </div>
-            ))}
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">
-              Departmental Remarks & Action Plan
-            </label>
-            <textarea
-              rows={3}
-              maxLength={2000}
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder="Highlights, leadership needs, or training notes for this quarter..."
-              className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)]"
-            />
-          </div>
-
-          <div className="flex flex-wrap justify-end gap-2 pt-3 border-t border-[var(--border-hairline)]">
-            <button
-              type="button"
-              disabled={saving}
-              onClick={() => handleSaveQuarterly('draft')}
-              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)] hover:bg-[var(--bg-subtle)]"
-            >
-              <Save className="w-3.5 h-3.5" />
-              <span>Save Draft</span>
-            </button>
-            <button
-              type="button"
-              disabled={saving}
-              onClick={() => handleSaveQuarterly('submitted')}
-              className="inline-flex items-center gap-1.5 px-5 py-2 text-xs font-medium rounded-lg bg-[var(--accent-primary)] text-white hover:bg-[var(--accent-hover)]"
-            >
-              <Send className="w-3.5 h-3.5" />
-              <span>{saving ? 'Submitting...' : 'Submit Quarterly Report'}</span>
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* TAB 2: READ-ONLY REPORT BROWSER */}
-      {activeTab === 'browser' && (
-        <div className="space-y-5">
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 no-print">
-            <div className="flex flex-wrap items-center gap-2.5">
-              <select
-                value={filterDistrict}
-                onChange={(e) => setFilterDistrict(e.target.value)}
-                className="px-3 py-2 text-xs rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)]"
-              >
-                <option value="all">All Districts</option>
-                {districts.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.name}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={filterDept}
-                onChange={(e) => setFilterDept(e.target.value)}
-                className="px-3 py-2 text-xs rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)]"
-              >
-                <option value="all">All 4 Departments</option>
-                {Object.entries(DEPT_CONFIG).map(([k, cfg]) => (
-                  <option key={k} value={k}>
-                    {cfg.label}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={filterQuarter}
-                onChange={(e) => setFilterQuarter(e.target.value)}
-                className="px-3 py-2 text-xs rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)] font-mono-tabular"
-              >
-                <option value="all">All Quarters</option>
-                <option value="1">Q1</option>
-                <option value="2">Q2</option>
-                <option value="3">Q3</option>
-                <option value="4">Q4</option>
-              </select>
-              <select
-                value={filterYear}
-                onChange={(e) => setFilterYear(e.target.value)}
-                className="px-3 py-2 text-xs rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)] font-mono-tabular"
-              >
-                <option value="all">All Years</option>
-                {[now.getFullYear() - 1, now.getFullYear(), now.getFullYear() + 1].map((y) => (
-                  <option key={y} value={String(y)}>
-                    {y}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => handleExport('csv')}
-                disabled={filteredBrowserReports.length === 0}
-                className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)] disabled:opacity-50"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>CSV</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => handleExport('xlsx')}
-                disabled={filteredBrowserReports.length === 0}
-                className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)] disabled:opacity-50"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>Excel</span>
-              </button>
-              <button
-                type="button"
-                onClick={triggerPrintPdf}
-                className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)]"
-              >
-                <Printer className="w-3.5 h-3.5" />
-                <span>Print</span>
-              </button>
-            </div>
-          </div>
-
-          <div className="border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] overflow-hidden print-sheet">
-            {loading ? (
-              <div className="p-6 space-y-3">
-                {[1, 2, 3].map((i) => (
-                  <div key={i} className="h-10 rounded bg-[var(--bg-subtle)] animate-pulse" />
-                ))}
-              </div>
-            ) : filteredBrowserReports.length === 0 ? (
-              <div className="p-10 text-center text-sm text-[var(--text-muted)]">
-                No quarterly department reports match the current filters.
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse text-sm">
-                  <thead>
-                    <tr className="border-b border-[var(--border-hairline)] text-xs text-[var(--text-muted)]">
-                      <th className="py-3 px-4 font-medium">Church</th>
-                      <th className="py-3 px-4 font-medium">District</th>
-                      <th className="py-3 px-4 font-medium">Department</th>
-                      <th className="py-3 px-4 font-medium">Period</th>
-                      <th className="py-3 px-4 font-medium">Status</th>
-                      <th className="py-3 px-4 font-medium">Submitted By</th>
-                      <th className="py-3 px-4 font-medium text-right no-print">Inspect</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[var(--border-hairline)]">
-                    {filteredBrowserReports.map((r) => (
-                      <tr key={r.id} className="hover:bg-[var(--bg-subtle)]/60">
-                        <td className="py-3 px-4 font-medium">{r.churchName}</td>
-                        <td className="py-3 px-4 text-xs text-[var(--text-secondary)]">
-                          {r.districtName || r.districtId}
-                        </td>
-                        <td className="py-3 px-4 text-xs">
-                          {DEPT_CONFIG[r.department]?.label || r.department}
-                        </td>
-                        <td className="py-3 px-4 text-xs font-mono-tabular whitespace-nowrap">
-                          Q{r.quarter} {r.year}
-                        </td>
-                        <td className="py-3 px-4 text-xs capitalize">
-                          <span
-                            className={
-                              r.status === 'submitted'
-                                ? 'text-emerald-700 dark:text-emerald-400 font-medium'
-                                : 'text-amber-700 dark:text-amber-400'
-                            }
-                          >
-                            {r.status}
-                          </span>
-                        </td>
-                        <td className="py-3 px-4 text-xs text-[var(--text-secondary)]">
-                          {r.submittedByName || 'Pastor'}
-                        </td>
-                        <td className="py-3 px-4 text-right no-print">
-                          <button
-                            type="button"
-                            onClick={() => setInspectReport(r)}
-                            className="inline-flex items-center gap-1 text-xs font-medium text-[var(--accent-primary)] hover:underline"
-                          >
-                            <Eye className="w-3.5 h-3.5" />
-                            <span>View Detail</span>
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Read-Only Inspection Drawer */}
-      {inspectReport && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex justify-end no-print">
-          <div className="max-w-lg w-full h-full bg-[var(--bg-surface)] border-l border-[var(--border-hairline)] overflow-y-auto p-6 space-y-6">
-            <div className="flex items-start justify-between gap-4 pb-4 border-b border-[var(--border-hairline)]">
-              <div>
-                <div className="text-xs text-[var(--text-muted)]">
-                  {DEPT_CONFIG[inspectReport.department]?.label} · Q{inspectReport.quarter}{' '}
-                  {inspectReport.year}
-                </div>
-                <h2 className="text-lg font-display font-semibold mt-0.5">
-                  {inspectReport.churchName}
-                </h2>
-                <div className="text-xs text-[var(--text-secondary)]">
-                  Submitted by {inspectReport.submittedByName || 'District Pastor'}
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setInspectReport(null)}
-                className="p-1.5 rounded-lg border border-[var(--border-hairline)]"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="divide-y divide-[var(--border-hairline)] border border-[var(--border-hairline)] rounded-lg overflow-hidden">
-              {(DEPT_CONFIG[inspectReport.department]?.fields || []).map((f) => {
-                const rawVal = Number(inspectReport.payload?.[f.key] || 0);
-                return (
-                  <div
-                    key={f.key}
-                    className="px-4 py-2.5 flex items-center justify-between text-sm bg-[var(--bg-canvas)]"
-                  >
-                    <span className="text-xs text-[var(--text-secondary)]">{f.label}</span>
-                    <span className="font-mono-tabular font-semibold">
-                      {f.isCurrency ? formatCurrencyRM(rawVal) : rawVal.toLocaleString()}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-
-            {inspectReport.notes && (
-              <div>
-                <div className="text-xs font-medium text-[var(--text-muted)] mb-1">
-                  Remarks & Action Plan
-                </div>
-                <div className="p-3.5 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-xs leading-relaxed">
-                  {inspectReport.notes}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
+  const seed = async () => { if (!admin || !profile) return; setBusy(true); setError(''); try { for (const template of defaultDepartmentTemplates()) if (!templates.some(item => item.key === template.key)) await saveDepartmentTemplate(db, template, profile.uid); } catch (err) { setError(err instanceof Error ? err.message : 'Unable to add starter forms.'); } finally { setBusy(false); } };
+  const summaryTemplate = templates.find(template => template.key === templateKey);
+  const submitted = filtered.filter(report => report.status === 'submitted');
+  const denominator = churchId ? scopedChurches.filter(church => church.id === churchId) : scopedChurches;
+  const responseCount = new Set(submitted.filter(report => denominator.some(church => church.id === report.churchId)).map(report => report.churchId)).size;
+  const missing = denominator.filter(church => !submitted.some(report => report.churchId === church.id));
+  if (!profile?.isActive) return <p>Sign in with an active, approved account to access department reports.</p>;
+  if (adminMode && !admin) return <p>Only Admin and Super Admin accounts can manage report forms.</p>;
+  if (!admin && !ownMission && profile.userRole !== 'district_pastor') return <p>Your account needs a mission assignment before department responses can be reviewed.</p>;
+  if (editor && admin) return <DepartmentTemplateEditor initial={editor} onResponses={() => { setTemplateKey(editor.key); setEditor(null); setView('responses'); }} onSave={template => saveDepartmentTemplate(db, template, profile.uid)} onClose={() => { setEditor(null); setRefresh(value => value + 1); }} />;
+  if (form) {
+    const church = scopedChurches.find(item => item.id === form.churchId);
+    if (!church) return <p>The selected church is no longer in your reporting scope. <button onClick={() => setForm(null)}>Back to reports</button></p>;
+    return <DepartmentForm key={`${form.template.id}:${church.id}:${year}:${quarter}`} template={form.template} initialValues={form.existing ? departmentAnswers(form.existing) : {}} editing={!!form.existing} context={`${church.name} · ${labels.district(church.districtId)} · Q${quarter} ${year}`} onClose={() => { setForm(null); setRefresh(value => value + 1); }} onSubmit={async values => {
+      if (!auth.currentUser) throw new Error('Please sign in before submitting.');
+      await saveDepartmentReport(db, { church, profile, template: form.template, year, quarter, values, existing: form.existing }, { projectId: firebaseConfig.projectId, databaseId: firebaseConfig.firestoreDatabaseId, getIdToken: () => auth.currentUser!.getIdToken() });
+    }} />;
+  }
+  return <div className="department-forms df-workspace"><header className="df-workspace-header"><div className="df-brand-icon"><FileText size={26} /></div><div><h2>{adminMode ? 'Department report forms' : 'Quarterly department reports'}</h2><p>{adminMode ? 'Create forms, manage questions, and review responses.' : 'One church. One quarter. A clear record of your ministry.'}</p></div><button className="df-icon-button" aria-label="Refresh department reports" onClick={() => setRefresh(value => value + 1)}><RefreshCw size={19} /></button>{admin && !adminMode && onManage && <button className="df-secondary" onClick={onManage}><Settings2 size={17} />Manage forms</button>}{admin && adminMode && <button className="df-primary" onClick={() => setEditor({ id: `form_${crypto.randomUUID()}`, key: '', name: 'Untitled form', description: '', isActive: true, order: templates.length, steps: [{ id: crypto.randomUUID(), title: 'Report details', fields: [{ id: crypto.randomUUID(), label: '', type: 'text', required: true }] }] })}><Plus size={18} />Blank form</button>}</header>
+    <nav className="df-tabs" aria-label="Department report views">{(['forms', 'responses', ...(adminMode ? ['settings'] : [])] as const).map(tab => <button key={tab} className={view === tab ? 'active' : ''} aria-current={view === tab ? 'page' : undefined} onClick={() => { setView(tab as typeof view); setError(''); }}>{tab === 'forms' ? adminMode ? 'Forms' : 'Fill a report' : tab === 'responses' ? `Responses${data.reportsLoading || data.reportError ? '' : ` (${filtered.length})`}` : 'Settings'}</button>)}</nav>
+    {(data.templateError || data.reportError || error) && <div className="df-card df-error" role="alert">{error || data.templateError || data.reportError}<button className="df-text-button" onClick={() => setRefresh(value => value + 1)}>Retry</button></div>}
+    {data.cached && <p className="df-notice">Showing cached responses. Connect and refresh to confirm the latest submissions.</p>}
+    {view !== 'settings' && <div className="df-scope-bar"><label>Year<input aria-label="Reporting year" type="number" min={2000} max={2100} value={year} onChange={event => { setYear(Number(event.target.value)); setInspect(null); }} /></label><label>Quarter<select aria-label="Reporting quarter" value={quarter} onChange={event => { setQuarter(Number(event.target.value)); setInspect(null); }}>{[1, 2, 3, 4].map(value => <option key={value} value={value}>Q{value}</option>)}</select></label>
+      {admin && <label>Mission<select aria-label="Report mission" value={missionId} onChange={event => { setMissionId(event.target.value); setDistrictId('all'); setChurchId(''); }}><option value="">All missions</option>{missions.map(mission => <option key={mission.id} value={mission.id}>{mission.name}</option>)}</select></label>}
+      {profile.userRole !== 'district_pastor' && <label>District<select aria-label="Report district" value={districtId} onChange={event => { setDistrictId(event.target.value); setChurchId(''); }}><option value="all">All districts</option>{districts.filter(district => !scopeMission || hasAlias(district.missionId, scopeMission)).map(district => <option value={district.id} key={district.id}>{district.name}</option>)}</select></label>}
+      <label>Church<select ref={churchSelect} aria-label="Report church" value={churchId} onChange={event => setChurchId(event.target.value)}><option value="">{view === 'forms' && !adminMode ? 'Select a church' : 'All churches'}</option>{scopedChurches.map(church => <option key={church.id} value={church.id}>{church.name}</option>)}</select></label>
+    </div>}
+    {view === 'forms' && !adminMode && formBlocker && <div className="df-notice" role="status"><p>{formBlocker.message}</p>{formBlocker.code === 'church' && <div className="df-template-actions" style={{ marginTop: 10 }}><button className="df-secondary" onClick={() => { churchSelect.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }); churchSelect.current?.focus(); }}>Choose church</button>{scopedChurches.length === 1 && <button className="df-primary" onClick={() => setChurchId(scopedChurches[0].id)}>Use {scopedChurches[0].name}</button>}</div>}</div>}
+    {view === 'forms' && <>{data.templatesLoading ? <p role="status">Loading report forms…</p> : (adminMode ? templates : activeTemplates).length === 0 && !data.templateError ? <div className="df-card df-empty"><FileText size={36} /><h3>No report forms yet</h3><p>{admin ? 'Create a blank form or add the starter ministry forms.' : 'Your administrator has not published any report forms yet.'}</p>{admin && <button className="df-primary" disabled={busy} onClick={() => void seed()}>Add starter forms</button>}</div> : <div className="df-template-grid">{(adminMode ? templates : activeTemplates).map(template => {
+      const response = selectedChurch ? reports.find(report => report.churchId === selectedChurch.id && report.year === year && report.quarter === quarter && departmentKey(report.department) === template.key) : undefined;
+      const blocker = departmentFormBlocker({ ...formAccess, template });
+      return <article className="df-template-card" key={template.id}><div className="df-template-cover"><FileText size={36} /><span>{template.isActive ? 'Accepting responses' : 'Closed'}</span></div><div className="df-template-body"><h3>{template.name}</h3><p>{template.description || `${template.steps.length} sections · ${template.steps.reduce((sum, step) => sum + step.fields.length, 0)} questions`}</p>{selectedChurch && !adminMode && !data.reportsLoading && !data.reportError && <p className="df-muted">{response ? response.status === 'submitted' ? '✓ Submitted' : 'Legacy draft · needs review' : 'Not submitted'}</p>}<div className="df-template-actions">{validateTemplate(template).length > 0 && <p className="df-error">This form needs an administrator’s review before it can accept responses.</p>}{adminMode ? <><button className="df-primary" onClick={() => setEditor(template)}>Edit form</button><button className="df-text-button" onClick={() => { setTemplateKey(template.key); setView('responses'); }}>Responses</button></> : <button className="df-primary" disabled={!!blocker} title={blocker?.message} aria-describedby={blocker ? `form-blocker-${template.id}` : undefined} onClick={() => void openForm(template)}>{response ? 'Edit response' : 'Fill report'}</button>}{!adminMode && blocker && <p className="df-muted" id={`form-blocker-${template.id}`}>{blocker.message}</p>}</div></div></article>;
+    })}</div>}</>}
+    {view === 'responses' && <div className="df-response-workspace"><div className="df-response-controls"><label>Form<select aria-label="Response form" value={templateKey} onChange={event => { setTemplateKey(event.target.value); setInspect(null); }}><option value="all">All forms</option>{templates.map(template => <option key={template.id} value={template.key}>{template.name}</option>)}</select></label><label>Search<input aria-label="Search responses" placeholder="Church, district or submitter" value={search} onChange={event => setSearch(event.target.value)} /></label><button className="df-secondary" disabled={data.reportsLoading || !!data.reportError || !filtered.length} onClick={() => exportToExcel(`Department_Responses_${year}_Q${quarter}`, [{ name: 'Responses', rows: departmentExportRows(filtered, templates) }, ...(summaryTemplate ? [{ name: 'Summary', rows: aggregateDepartment(summaryTemplate, submitted).map(([Question, Total]) => ({ Question, Total })) }] : [])])}>Export Excel</button><button className="df-secondary" disabled={data.reportsLoading || !!data.reportError || !filtered.length} onClick={() => exportToCsv(`Department_Responses_${year}_Q${quarter}`, departmentExportRows(filtered, templates))}>Export CSV</button></div>
+      {data.reportsLoading ? <p role="status">Loading responses…</p> : !data.reportError && <><section className="df-card"><div className="df-response-heading"><h3>{filtered.length} response{filtered.length === 1 ? '' : 's'}</h3>{summaryTemplate && <button className="df-secondary" onClick={() => setPreview({ title: `${summaryTemplate.name} — Summary`, filename: `${summaryTemplate.key}_summary_${year}_Q${quarter}`, subtitle: `Q${quarter} ${year}`, metadata: [['Coverage', `${responseCount} of ${denominator.length} churches (visible records)`], ['Data', data.cached ? 'Cached: may be incomplete' : 'Live accessible responses']], sections: [{ title: 'Consolidated totals', rows: aggregateDepartment(summaryTemplate, submitted) }, ...submitted.map(report => ({ title: report.churchName, rows: answerRows(reportTemplate(report, templates) || summaryTemplate, departmentAnswers(report)) }))], blueHeader: true })}>Preview / Print summary</button>}</div>{summaryTemplate ? <><p>{responseCount} of {denominator.length} churches submitted{search ? ' (search filtered)' : ''}.</p><progress aria-label="Submission coverage" max={denominator.length || 1} value={responseCount} /><ReportTables sections={[{ title: 'Consolidated totals', rows: aggregateDepartment(summaryTemplate, submitted) }]} /><details><summary>Churches without a visible submission ({missing.length})</summary>{missing.map(church => <p key={church.id}>{church.name}</p>)}</details></> : <p className="df-muted">Select a form to view totals and church submission coverage.</p>}</section>
+      <div className="df-card df-response-list">{!filtered.length && <p>No responses match this period and scope.</p>}{filtered.map(report => <article key={report.id}><div><h4>{report.churchName}</h4><p>{String(report.sourceData?.departmentName || templates.find(item => item.key === report.department)?.name || report.department || 'Archived report')} · {report.districtName}</p><small>{report.submittedByName || 'Name unavailable'} · {report.status}</small></div><button className="df-secondary" onClick={() => setInspect(report)}>View response</button></article>)}</div>
+      {inspect && <section className="df-card df-response-detail"><div className="df-response-heading"><h3>{inspect.churchName} · Q{inspect.quarter} {inspect.year}</h3><button className="df-text-button" onClick={() => setInspect(null)}>Close</button></div><ReportTables sections={responseDocument(inspect).sections} /><div className="df-template-actions"><button className="df-secondary" onClick={() => setPreview(responseDocument(inspect))}>Preview / Print response</button>{canFill && templates.some(template => template.key === departmentKey(inspect.department) && template.isActive) && <button className="df-primary" disabled={busy} onClick={() => void openForm(templates.find(template => template.key === departmentKey(inspect.department))!, inspect)}>Edit response</button>}</div></section>}
+      </>}
+    </div>}
+    {view === 'settings' && admin && <section className="df-card df-settings"><h3>Form management</h3><p>Use “Accepting responses” in each form to publish or close it. Closed forms keep their saved responses available for review.</p><p>Previously submitted responses keep the questions used at submission, so later form changes do not change their printed history.</p><button className="df-secondary" disabled={busy || data.templatesLoading || !!data.templateError} onClick={() => void seed()}>Add missing starter forms</button><p className="df-muted">Children’s Ministry and Stewardship. Existing forms are kept.</p></section>}
+    {preview && <ReportPreview report={preview} onClose={() => setPreview(null)} />}
+  </div>;
 }

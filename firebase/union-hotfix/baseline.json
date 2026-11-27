@@ -1,0 +1,11 @@
+{
+  "project": "pastor-report-e4c52",
+  "release": "cloud.firestore",
+  "baselineRulesetName": "projects/pastor-report-e4c52/rulesets/bebd7f07-c99a-4bd9-b3cc-8aa972b6f79d",
+  "observedReleaseUpdateTime": "2026-11-27T13:04:29.175518Z",
+  "baselineSha256": "754dc13b757089d678323c4286b58a1cdfe5cc57df3175cda0284eb179a25376",
+  "candidateSha256": "f934798fa8212c6dec375d3cd2865562e0300d58454aadc42ca631ab3ea33922",
+  "status": "Deployed and verified",
+  "deployedRulesetName": "projects/pastor-report-e4c52/rulesets/f1e16d2e-012f-4eb7-b3fb-45a808fd249d",
+  "deployedReleaseUpdateTime": "2026-11-27T13:12:20.416268Z"
+}

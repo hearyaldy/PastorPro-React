@@ -1,483 +1,204 @@
+import { useHierarchyLabels } from '../hooks/useHierarchyLabels';
+import type { MissionReportContext } from '../components/MissionReportingDashboard';
 import { useEffect, useRef, useState } from 'react';
-import {
-  collection,
-  doc,
-  onSnapshot,
-  query,
-  serverTimestamp,
-  setDoc,
-  where,
-} from 'firebase/firestore';
-import { Check, Printer, Send } from 'lucide-react';
+import { collection, getDocsFromServer, onSnapshot, query, where } from 'firebase/firestore';
+import { Check, Eye, Save, Send } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { db, handleFirestoreError, OperationType, reportListenerError } from '../lib/firebase';
-import { MONTHS, triggerPrintPdf } from '../lib/exportUtils';
+import { useMission } from '../contexts/MissionContext';
+import { auth, db, OperationType, reportListenerError } from '../lib/firebase';
+import firebaseConfig from '../../firebase-applet-config.json';
+import { MONTHS, formatCurrencyRM } from '../lib/exportUtils';
+import { BORANG_B_SECTIONS, BORANG_B_TEXT_FIELDS, borangBForm, emptyBorangB, readBorangB, reportsForPeriod, type BorangBForm } from '../lib/borangB';
+import { ReportConflictError, saveBorangB } from '../lib/borangBStorage';
+import { borangBDocument } from '../lib/reportDocuments';
+import type { PrintableReport } from '../lib/pdfReport';
+import { ReportPreview } from '../components/ReportPreview';
+import { StatisticsCards } from '../components/StatisticsCards';
 import { useToast } from '../components/Toast';
 import type { BorangBReport } from '../types';
 
-interface BorangBFormState {
-  sermonsPreached: number;
-  bibleStudiesGiven: number;
-  homeVisitations: number;
-  hospitalVisitations: number;
-  counselingSessions: number;
-  evangelisticMeetings: number;
-  baptisms: number;
-  professionsOfFaith: number;
-  boardMeetings: number;
-  communionServices: number;
-  anointings: number;
-  weddings: number;
-  funerals: number;
-  childDedications: number;
-  titheFaithfulnessNotes: string;
-  challengesAndPrayer: string;
-  nextMonthGoals: string;
-}
-
-const EMPTY_FORM: BorangBFormState = {
-  sermonsPreached: 0,
-  bibleStudiesGiven: 0,
-  homeVisitations: 0,
-  hospitalVisitations: 0,
-  counselingSessions: 0,
-  evangelisticMeetings: 0,
-  baptisms: 0,
-  professionsOfFaith: 0,
-  boardMeetings: 0,
-  communionServices: 0,
-  anointings: 0,
-  weddings: 0,
-  funerals: 0,
-  childDedications: 0,
-  titheFaithfulnessNotes: '',
-  challengesAndPrayer: '',
-  nextMonthGoals: '',
-};
-
-const NUMERIC_FIELDS: { key: keyof BorangBFormState; label: string; max: number }[] = [
-  { key: 'sermonsPreached', label: 'Sermons Preached', max: 1000 },
-  { key: 'bibleStudiesGiven', label: 'Bible Studies Conducted', max: 2000 },
-  { key: 'homeVisitations', label: 'Home Visitations', max: 2000 },
-  { key: 'hospitalVisitations', label: 'Hospital / Sick Visits', max: 1000 },
-  { key: 'counselingSessions', label: 'Pastoral Counseling Sessions', max: 1000 },
-  { key: 'evangelisticMeetings', label: 'Evangelistic Meetings', max: 1000 },
-  { key: 'baptisms', label: 'Baptisms', max: 5000 },
-  { key: 'professionsOfFaith', label: 'Professions of Faith', max: 5000 },
-  { key: 'boardMeetings', label: 'Church Board Meetings', max: 500 },
-  { key: 'communionServices', label: 'Communion Services', max: 500 },
-  { key: 'anointings', label: 'Anointing Services', max: 500 },
-  { key: 'weddings', label: 'Weddings Officiated', max: 500 },
-  { key: 'funerals', label: 'Funeral Services', max: 500 },
-  { key: 'childDedications', label: 'Child Dedications', max: 500 },
-];
-
-export function BorangBPage() {
+export function BorangBPage({ initialContext }: { initialContext?: MissionReportContext }) {
+  const labels = useHierarchyLabels();
   const { profile } = useAuth();
+  const { missions } = useMission();
   const { notify } = useToast();
-
   const now = new Date();
-  const [year, setYear] = useState(now.getFullYear());
-  const [month, setMonth] = useState(now.getMonth() + 1);
-  const [form, setForm] = useState<BorangBFormState>(EMPTY_FORM);
-  const [status, setStatus] = useState<'draft' | 'submitted'>('draft');
+  const [year, setYear] = useState(initialContext?.year || now.getFullYear());
+  const [month, setMonth] = useState(initialContext?.month || now.getMonth() + 1);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [history, setHistory] = useState<BorangBReport[]>([]);
-  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle');
-  const [hasExistingDoc, setHasExistingDoc] = useState(false);
-
-  const debounceRef = useRef<number | null>(null);
-  const hydratedRef = useRef(false);
-
-  const reportDocId = profile
-    ? `${profile.uid}_${year}_${String(month).padStart(2, '0')}`
-    : '';
+  const [loaded, setLoaded] = useState(false);
+  const [form, setForm] = useState<BorangBForm>(emptyBorangB);
+  const [status, setStatus] = useState<'draft' | 'submitted'>('draft');
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [conflict, setConflict] = useState(false);
+  const [hydratedKey, setHydratedKey] = useState('');
+  const [preview, setPreview] = useState<PrintableReport | null>(null);
+  const dirtyRef = useRef(false);
+  const savingRef = useRef(false);
+  const base = useRef<BorangBReport | null>(null);
+  const currentKey = useRef('');
+  const saveRef = useRef<() => Promise<boolean>>(async () => false);
+  const matching = reportsForPeriod(history, profile?.uid || '', year, month);
+  const selected = selectedId ? matching.find(item => item.id === selectedId) : matching.length === 1 ? matching[0] : undefined;
+  const ambiguous = matching.length > 1 && !selected;
+  const reportId = selected?.id || `${profile?.uid}_${year}_${String(month).padStart(2, '0')}`;
+  const key = `${profile?.uid}:${reportId}`;
+  const ready = loaded && !ambiguous && hydratedKey === key;
 
   useEffect(() => {
     if (!profile) return;
-    const unsub = onSnapshot(
-      query(
-        collection(db, 'borang_b_reports'),
-        where('userId', '==', profile.uid),
-      ),
-      (snap) => {
-        const items = snap.docs
-          .map((d) => ({
-            id: d.id,
-            ...(d.data() as Omit<BorangBReport, 'id'>),
-          }))
-          .sort((a, b) => (b.year - a.year) || (b.month - a.month));
-        setHistory(items);
-      },
-      (err) => {
-        reportListenerError(err, OperationType.LIST, 'borang_b_reports');
-      },
-    );
-    return () => unsub();
-  }, [profile]);
+    setLoaded(false);
+    return onSnapshot(query(collection(db, 'borang_b_reports'), where('userId', '==', profile.uid)), snapshot => {
+      setHistory(snapshot.docs.map(item => readBorangB(item.id, item.data())).filter((item): item is BorangBReport => item !== null).sort((a, b) => b.year - a.year || b.month - a.month));
+      setLoaded(true);
+    }, err => {
+      reportListenerError(err, OperationType.LIST, 'borang_b_reports');
+      setError('Unable to load your reports. Check your connection and account access.');
+    });
+  }, [profile?.uid]);
 
   useEffect(() => {
-    if (!reportDocId) return;
-    hydratedRef.current = false;
-    const ref = doc(db, 'borang_b_reports', reportDocId);
-    const unsub = onSnapshot(
-      ref,
-      (snap) => {
-        if (snap.exists()) {
-          const data = snap.data() as BorangBReport;
-          setHasExistingDoc(true);
-          setStatus(data.status || 'draft');
-          setForm({
-            sermonsPreached: data.sermonsPreached ?? 0,
-            bibleStudiesGiven: data.bibleStudiesGiven ?? 0,
-            homeVisitations: data.homeVisitations ?? 0,
-            hospitalVisitations: data.hospitalVisitations ?? 0,
-            counselingSessions: data.counselingSessions ?? 0,
-            evangelisticMeetings: data.evangelisticMeetings ?? 0,
-            baptisms: data.baptisms ?? 0,
-            professionsOfFaith: data.professionsOfFaith ?? 0,
-            boardMeetings: data.boardMeetings ?? 0,
-            communionServices: data.communionServices ?? 0,
-            anointings: data.anointings ?? 0,
-            weddings: data.weddings ?? 0,
-            funerals: data.funerals ?? 0,
-            childDedications: data.childDedications ?? 0,
-            titheFaithfulnessNotes: data.titheFaithfulnessNotes || '',
-            challengesAndPrayer: data.challengesAndPrayer || '',
-            nextMonthGoals: data.nextMonthGoals || '',
-          });
-        } else {
-          setHasExistingDoc(false);
-          setStatus('draft');
-          setForm(EMPTY_FORM);
-        }
-        hydratedRef.current = true;
-      },
-      (err) => {
-        hydratedRef.current = true;
-        reportListenerError(
-          err,
-          OperationType.GET,
-          `borang_b_reports/${reportDocId}`,
-        );
-      },
-    );
-    return () => unsub();
-  }, [reportDocId]);
-
-  const persistReport = async (
-    nextForm: BorangBFormState,
-    nextStatus: 'draft' | 'submitted',
-    manualSubmit = false,
-  ) => {
-    if (!profile || !reportDocId) return;
-    setSaveState('saving');
-    const ref = doc(db, 'borang_b_reports', reportDocId);
-    const payload = {
-      userId: profile.uid,
-      pastorName: profile.displayName.slice(0, 120),
-      missionId: profile.missionId || 'sam_sabah',
-      ...(profile.regionId ? { regionId: profile.regionId } : {}),
-      districtId: profile.districtId || 'unassigned',
-      ...(profile.districtName ? { districtName: profile.districtName } : {}),
-      year,
-      month,
-      status: nextStatus,
-      sermonsPreached: Math.max(0, Math.round(nextForm.sermonsPreached || 0)),
-      bibleStudiesGiven: Math.max(0, Math.round(nextForm.bibleStudiesGiven || 0)),
-      homeVisitations: Math.max(0, Math.round(nextForm.homeVisitations || 0)),
-      hospitalVisitations: Math.max(0, Math.round(nextForm.hospitalVisitations || 0)),
-      counselingSessions: Math.max(0, Math.round(nextForm.counselingSessions || 0)),
-      evangelisticMeetings: Math.max(0, Math.round(nextForm.evangelisticMeetings || 0)),
-      baptisms: Math.max(0, Math.round(nextForm.baptisms || 0)),
-      professionsOfFaith: Math.max(0, Math.round(nextForm.professionsOfFaith || 0)),
-      boardMeetings: Math.max(0, Math.round(nextForm.boardMeetings || 0)),
-      communionServices: Math.max(0, Math.round(nextForm.communionServices || 0)),
-      anointings: Math.max(0, Math.round(nextForm.anointings || 0)),
-      weddings: Math.max(0, Math.round(nextForm.weddings || 0)),
-      funerals: Math.max(0, Math.round(nextForm.funerals || 0)),
-      childDedications: Math.max(0, Math.round(nextForm.childDedications || 0)),
-      titheFaithfulnessNotes: nextForm.titheFaithfulnessNotes.slice(0, 1500),
-      challengesAndPrayer: nextForm.challengesAndPrayer.slice(0, 2000),
-      nextMonthGoals: nextForm.nextMonthGoals.slice(0, 2000),
-      ...(!hasExistingDoc ? { createdAt: serverTimestamp() } : {}),
-      updatedAt: serverTimestamp(),
-    };
-
-    try {
-      await setDoc(ref, payload, { merge: true });
-      setStatus(nextStatus);
-      setSaveState('saved');
-      if (manualSubmit) {
-        notify(
-          `Borang B for ${MONTHS[month - 1]} ${year} submitted to Mission.`,
-          'success',
-        );
+    if (!loaded || ambiguous || savingRef.current) return;
+    if (dirtyRef.current) {
+      if (currentKey.current !== key || selected?.revision !== base.current?.revision) {
+        setConflict(true);
+        setError('This month changed on another device. Reload the report before saving. Your unsaved entries are still visible.');
       }
-    } catch (err) {
-      setSaveState('idle');
-      handleFirestoreError(
-        err,
-        OperationType.WRITE,
-        `borang_b_reports/${reportDocId}`,
-      );
+      return;
     }
+    base.current = selected || null;
+    currentKey.current = key;
+    setForm(selected ? borangBForm(selected) : emptyBorangB());
+    setStatus(selected?.status || 'draft');
+    setHydratedKey(key);
+    setError(''); setConflict(false);
+  }, [loaded, key, selected?.revision, ambiguous, saving, hydratedKey]);
+
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => { if (dirtyRef.current) { event.preventDefault(); event.returnValue = ''; } };
+    const navigate = (event: Event) => {
+      if ((dirtyRef.current || savingRef.current) && !window.confirm(savingRef.current ? 'Your report is still saving. Leave this page?' : 'You have unsaved report entries. Leave without saving?')) event.preventDefault();
+    };
+    window.addEventListener('beforeunload', warn);
+    window.addEventListener('pastorpro:before-navigate', navigate);
+    return () => { window.removeEventListener('beforeunload', warn); window.removeEventListener('pastorpro:before-navigate', navigate); };
+  }, []);
+
+  const buildCurrent = (nextStatus = status): BorangBReport => {
+    const existing = base.current;
+    const initial = existing || readBorangB(reportId, {
+      ...emptyBorangB(), userId: profile?.uid, userName: profile?.displayName,
+      month, year, missionId: profile?.missionId || '', districtId: profile?.districtId || '',
+      districtName: profile?.districtName || '', churchId: profile?.churchId || '',
+    })!;
+    return { ...initial, ...form, status: nextStatus };
   };
 
-  const handleFieldChange = (
-    key: keyof BorangBFormState,
-    value: number | string,
-  ) => {
-    const next = { ...form, [key]: value };
-    setForm(next);
-    if (!hydratedRef.current) return;
-
-    if (debounceRef.current) window.clearTimeout(debounceRef.current);
-    setSaveState('saving');
-    debounceRef.current = window.setTimeout(() => {
-      persistReport(next, status);
-    }, 800);
+  const persist = async (nextStatus = status, manual = false): Promise<boolean> => {
+    if (!profile || !auth.currentUser || !ready || conflict || savingRef.current) return false;
+    savingRef.current = true; setSaving(true); setError('');
+    try {
+      const saved = await saveBorangB(db, buildCurrent(nextStatus), {
+        isNew: !base.current, expectedRevision: base.current?.revision,
+        projectId: firebaseConfig.projectId, databaseId: firebaseConfig.firestoreDatabaseId || '(default)',
+        getIdToken: () => auth.currentUser!.getIdToken(),
+      });
+      base.current = saved;
+      dirtyRef.current = false;
+      setDirty(false); setStatus(saved.status); setSelectedId(saved.id);
+      setHistory(items => [saved, ...items.filter(item => item.id !== saved.id)].sort((a, b) => b.year - a.year || b.month - a.month));
+      if (manual) notify(nextStatus === 'submitted' ? 'Borang B submitted.' : 'Draft saved.', 'success');
+      return true;
+    } catch (err) {
+      const isConflict = err instanceof ReportConflictError;
+      setConflict(isConflict);
+      setError(isConflict ? err.message : 'Could not save the report. Your entries are kept. Check your connection and access, then select Save Draft to retry.');
+      reportListenerError(err, OperationType.WRITE, `borang_b_reports/${reportId}`);
+      return false;
+    } finally { savingRef.current = false; setSaving(false); }
   };
+  saveRef.current = () => persist();
 
-  return (
-    <div className="space-y-8">
-      {/* Period Selector & Actions */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-5 border-b border-[var(--border-hairline)] no-print">
-        <div className="flex flex-wrap items-center gap-3">
-          <select
-            value={month}
-            onChange={(e) => setMonth(Number(e.target.value))}
-            className="px-3.5 py-2 text-sm rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)]"
-          >
-            {MONTHS.map((m, idx) => (
-              <option key={m} value={idx + 1}>
-                {m}
-              </option>
-            ))}
-          </select>
-          <select
-            value={year}
-            onChange={(e) => setYear(Number(e.target.value))}
-            className="px-3.5 py-2 text-sm rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)] font-mono-tabular"
-          >
-            {[currentYear - 1, currentYear, currentYear + 1].map((y) => (
-              <option key={y} value={y}>
-                {y}
-              </option>
-            ))}
-          </select>
-          <span className="text-xs text-[var(--text-muted)]">
-            Status:{' '}
-            <strong className="text-[var(--text-primary)] capitalize">
-              {status}
-            </strong>
-            {saveState === 'saving' && ' · Saving...'}
-            {saveState === 'saved' && ' · Auto-saved'}
-          </span>
-        </div>
+  useEffect(() => {
+    if (!dirty || !ready || saving || error || conflict) return;
+    const timer = window.setTimeout(() => { void saveRef.current(); }, 1200);
+    return () => window.clearTimeout(timer);
+  }, [form, dirty, ready, saving, error, conflict, key]);
 
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={triggerPrintPdf}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)] hover:bg-[var(--bg-subtle)] whitespace-nowrap"
-          >
-            <Printer className="w-3.5 h-3.5" />
-            <span>Export PDF / Print</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => persistReport(form, 'submitted', true)}
-            className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium rounded-lg bg-[var(--accent-primary)] text-white hover:bg-[var(--accent-hover)] whitespace-nowrap"
-          >
-            {status === 'submitted' ? (
-              <>
-                <Check className="w-3.5 h-3.5" />
-                <span>Update Submission</span>
-              </>
-            ) : (
-              <>
-                <Send className="w-3.5 h-3.5" />
-                <span>Submit Borang B</span>
-              </>
-            )}
-          </button>
-        </div>
+  const changePeriod = async (nextYear: number, nextMonth: number, id: string | null = null) => {
+    if (savingRef.current) return;
+    if (dirtyRef.current && !(await persist())) return;
+    dirtyRef.current = false; setDirty(false); setSelectedId(id); setYear(nextYear); setMonth(nextMonth);
+  };
+  const reload = async () => {
+    if (dirtyRef.current && !window.confirm('Reload this report and discard your unsaved entries?')) return;
+    try {
+      const snapshot = await getDocsFromServer(query(collection(db, 'borang_b_reports'), where('userId', '==', profile!.uid)));
+      dirtyRef.current = false; setDirty(false); setConflict(false); setError(''); setHydratedKey('');
+      setHistory(snapshot.docs.map(item => readBorangB(item.id, item.data())).filter((item): item is BorangBReport => item !== null));
+    } catch { setError('Unable to reload the report. Your entries are kept. Try again when connected.'); }
+  };
+  const update = (field: keyof BorangBForm, value: string | number) => {
+    dirtyRef.current = true; setDirty(true);
+    if (!conflict) setError('');
+    setForm(previous => ({ ...previous, [field]: value }));
+  };
+  const missionName = labels.mission(profile?.missionId, profile?.missionName);
+  const years = Array.from(new Set([now.getFullYear() - 1, now.getFullYear(), now.getFullYear() + 1, ...history.map(item => item.year)])).sort((a, b) => b - a);
+
+  return <div className="space-y-6">
+    <div className="flex flex-wrap items-center justify-between gap-3 no-print">
+      <div className="flex flex-wrap items-center gap-3">
+        <select aria-label="Report month" disabled={saving} value={month} onChange={event => void changePeriod(year, Number(event.target.value))} className="rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-2 text-sm">
+          {MONTHS.map((label, index) => <option key={label} value={index + 1}>{label}</option>)}
+        </select>
+        <select aria-label="Report year" disabled={saving} value={year} onChange={event => void changePeriod(Number(event.target.value), month)} className="rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-2 text-sm">
+          {years.map(value => <option key={value}>{value}</option>)}
+        </select>
+        <span aria-live="polite" className="text-xs text-[var(--text-secondary)]">{status.toUpperCase()} · {saving ? 'Saving…' : dirty ? 'Unsaved changes' : ready ? 'Up to date' : 'Loading…'}</span>
       </div>
-
-      {/* Printable Borang B Form Sheet */}
-      <div className="border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] p-6 md:p-8 space-y-8 print-sheet">
-        <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 pb-5 border-b border-[var(--border-hairline)]">
-          <div>
-            <div className="text-xs text-[var(--text-muted)]">
-              Sabah Adventist Mission · Ministerial Department
-            </div>
-            <h2 className="text-xl font-display font-semibold mt-1">
-              Borang B — Monthly Pastoral Report ({MONTHS[month - 1]} {year})
-            </h2>
-          </div>
-          <div className="text-xs text-[var(--text-secondary)] space-y-0.5 text-left sm:text-right">
-            <div>Pastor: {profile?.displayName}</div>
-            <div>District: {profile?.districtName || 'Unassigned'}</div>
-          </div>
-        </div>
-
-        {/* Quantitative Metrics Grid */}
-        <div>
-          <h3 className="text-sm font-semibold mb-4">
-            01. Ministerial & Evangelistic Metrics
-          </h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {NUMERIC_FIELDS.map((field) => (
-              <div
-                key={field.key}
-                className="p-3.5 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)]"
-              >
-                <label className="block text-xs text-[var(--text-secondary)] mb-1.5">
-                  {field.label}
-                </label>
-                <input
-                  type="number"
-                  min={0}
-                  max={field.max}
-                  value={form[field.key] as number}
-                  onChange={(e) =>
-                    handleFieldChange(field.key, Math.max(0, Number(e.target.value)))
-                  }
-                  className="w-full px-2.5 py-1.5 text-base font-mono-tabular font-semibold rounded border border-[var(--border-hairline)] bg-[var(--bg-surface)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-primary)]"
-                />
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Qualitative Narratives */}
-        <div className="space-y-4 pt-2 border-t border-[var(--border-hairline)]">
-          <h3 className="text-sm font-semibold">
-            02. Pastoral Reflections & District Notes
-          </h3>
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            <div>
-              <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">
-                Stewardship & Tithe Faithfulness Notes
-              </label>
-              <textarea
-                rows={4}
-                maxLength={1500}
-                value={form.titheFaithfulnessNotes}
-                onChange={(e) =>
-                  handleFieldChange('titheFaithfulnessNotes', e.target.value)
-                }
-                placeholder="Observations across district congregations..."
-                className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)]"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">
-                Challenges & Prayer Requests
-              </label>
-              <textarea
-                rows={4}
-                maxLength={2000}
-                value={form.challengesAndPrayer}
-                onChange={(e) =>
-                  handleFieldChange('challengesAndPrayer', e.target.value)
-                }
-                placeholder="Ministry challenges or urgent family needs..."
-                className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)]"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1.5">
-                Next Month Ministry Goals
-              </label>
-              <textarea
-                rows={4}
-                maxLength={2000}
-                value={form.nextMonthGoals}
-                onChange={(e) =>
-                  handleFieldChange('nextMonthGoals', e.target.value)
-                }
-                placeholder="Planned baptismal classes, visitations, or campaigns..."
-                className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)]"
-              />
-            </div>
-          </div>
-        </div>
+      <div className="flex flex-wrap gap-2 text-xs">
+        <button disabled={!ready || saving} onClick={() => { const document = borangBDocument(labels.withNames(buildCurrent()), missionName); if (dirty) document.metadata?.push(['Save status', 'Unsaved changes']); setPreview(document); }} className="inline-flex items-center gap-2 border border-[var(--border-hairline)] rounded-lg px-3 py-2 disabled:opacity-50"><Eye size={15} />Preview / Print</button>
+        <button disabled={!ready || saving || conflict} onClick={() => void persist(status, true)} className="inline-flex items-center gap-2 border border-[var(--border-hairline)] rounded-lg px-3 py-2 disabled:opacity-50"><Save size={15} />Save Draft / Changes</button>
+        <button disabled={!ready || saving || conflict} onClick={() => void persist('submitted', true)} className="inline-flex items-center gap-2 bg-[var(--accent-primary)] text-white rounded-lg px-3 py-2 disabled:opacity-50"><Send size={15} />{status === 'submitted' ? 'Update Submission' : 'Submit Report'}</button>
       </div>
-
-      {/* Personal Submission History */}
-      <section className="border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] overflow-hidden no-print">
-        <div className="px-5 py-4 border-b border-[var(--border-hairline)]">
-          <h3 className="text-sm font-semibold">Your Borang B Submission History</h3>
-        </div>
-        {history.length === 0 ? (
-          <div className="p-6 text-xs text-[var(--text-muted)] text-center">
-            No saved Borang B records yet. Editing any field above automatically saves your draft.
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-sm">
-              <thead>
-                <tr className="border-b border-[var(--border-hairline)] text-xs text-[var(--text-muted)]">
-                  <th className="py-2.5 px-4 font-medium">Period</th>
-                  <th className="py-2.5 px-4 font-medium">Status</th>
-                  <th className="py-2.5 px-4 font-medium text-right">Sermons</th>
-                  <th className="py-2.5 px-4 font-medium text-right">Visits</th>
-                  <th className="py-2.5 px-4 font-medium text-right">Bible Studies</th>
-                  <th className="py-2.5 px-4 font-medium text-right">Baptisms</th>
-                  <th className="py-2.5 px-4 font-medium text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--border-hairline)]">
-                {history.map((item) => (
-                  <tr key={item.id} className="hover:bg-[var(--bg-subtle)]/60">
-                    <td className="py-2.5 px-4 font-medium">
-                      {MONTHS[(item.month || 1) - 1]} {item.year}
-                    </td>
-                    <td className="py-2.5 px-4 text-xs capitalize">
-                      <span
-                        className={
-                          item.status === 'submitted'
-                            ? 'text-emerald-700 dark:text-emerald-400 font-medium'
-                            : 'text-amber-700 dark:text-amber-400'
-                        }
-                      >
-                        {item.status}
-                      </span>
-                    </td>
-                    <td className="py-2.5 px-4 text-right font-mono-tabular">
-                      {item.sermonsPreached}
-                    </td>
-                    <td className="py-2.5 px-4 text-right font-mono-tabular">
-                      {(item.homeVisitations || 0) + (item.hospitalVisitations || 0)}
-                    </td>
-                    <td className="py-2.5 px-4 text-right font-mono-tabular">
-                      {item.bibleStudiesGiven}
-                    </td>
-                    <td className="py-2.5 px-4 text-right font-mono-tabular">
-                      {item.baptisms}
-                    </td>
-                    <td className="py-2.5 px-4 text-right">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setYear(item.year);
-                          setMonth(item.month);
-                        }}
-                        className="text-xs font-medium text-[var(--accent-primary)] hover:underline"
-                      >
-                        Load Month
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
     </div>
-  );
+    {error && <div role="alert" className="p-4 rounded-xl border border-amber-300 bg-amber-50 text-amber-950 text-sm">{error}{conflict && <button onClick={() => void reload()} className="ml-3 underline font-semibold">Reload Report</button>}</div>}
+    {ambiguous && <div role="alert" className="p-4 rounded-xl border border-amber-300 text-sm">There are {matching.length} reports for this month. Choose an existing record in the history below. A new duplicate will not be created.</div>}
+    <StatisticsCards items={[
+      { label: 'Members at End', value: form.membersEnd, icon: 'people', color: 'blue' },
+      { label: 'Baptisms', value: form.baptisms, icon: 'people', color: 'teal' },
+      { label: 'Total Visitations', value: form.homeVisitations + form.hospitalVisitations + form.prisonVisitations, icon: 'distance', color: 'green' },
+      { label: 'Tithes & Offerings', value: formatCurrencyRM(form.tithe + form.offerings), icon: 'money', color: 'purple' },
+    ]} />
+    <div className="text-sm text-[var(--text-secondary)]">{missionName || 'Mission'} · {profile?.displayName} · {labels.district(profile?.districtId, profile?.districtName)}</div>
+    <fieldset disabled={!ready || saving || conflict} className="grid gap-5 lg:grid-cols-2 disabled:opacity-60">
+      {BORANG_B_SECTIONS.map(section => <section key={section.title} className="border border-[var(--border-hairline)] rounded-2xl bg-[var(--bg-surface)] overflow-hidden shadow-sm">
+        <h3 className="px-5 py-4 text-sm font-semibold bg-[var(--bg-subtle)] border-b border-[var(--border-hairline)]">{section.title}</h3>
+        <div className="divide-y divide-[var(--border-hairline)]">
+          {section.fields.map(([field, label]) => <label key={field} className="flex items-center justify-between gap-4 px-5 py-3 text-sm">
+            <span className={field === 'membersEnd' ? 'font-semibold' : ''}>{label}</span>
+            <input aria-label={label} type="number" min={0} step={field === 'tithe' || field === 'offerings' ? '0.01' : '1'} value={form[field]}
+              onChange={event => update(field, Math.max(0, Number(event.target.value) || 0))}
+              className="w-28 border border-[var(--border-hairline)] bg-[var(--bg-canvas)] rounded-lg px-3 py-2 text-right font-mono-tabular" />
+          </label>)}
+        </div>
+      </section>)}
+      <section className="border border-[var(--border-hairline)] rounded-2xl bg-[var(--bg-surface)] p-5 space-y-4">
+        <h3 className="text-sm font-semibold">Additional Information</h3>
+        {BORANG_B_TEXT_FIELDS.map(([field, label]) => <label key={field} className="block text-sm">{label}<textarea rows={3} maxLength={10000} value={form[field]} onChange={event => update(field, event.target.value)} className="mt-2 w-full border border-[var(--border-hairline)] bg-[var(--bg-canvas)] rounded-lg p-3" /></label>)}
+      </section>
+    </fieldset>
+    <section className="border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] overflow-hidden">
+      <h3 className="px-5 py-4 border-b border-[var(--border-hairline)] text-sm font-semibold">Your Borang B History</h3>
+      <div className="overflow-x-auto"><table className="w-full text-sm text-left"><thead><tr className="text-xs text-[var(--text-muted)]">{['Period', 'Status', 'Members', 'Bible Studies', 'Baptisms', ''].map(label => <th key={label} className="p-3">{label}</th>)}</tr></thead>
+        <tbody>{history.map(item => <tr key={item.id} className="border-t border-[var(--border-hairline)]"><td className="p-3">{MONTHS[item.month - 1]} {item.year}</td><td className="p-3 capitalize">{item.status}</td><td className="p-3">{item.membersEnd}</td><td className="p-3">{item.bibleStudies}</td><td className="p-3">{item.baptisms}</td><td className="p-3"><button disabled={saving} onClick={() => void changePeriod(item.year, item.month, item.id)} className="text-[var(--accent-primary)] font-medium">Open Record</button></td></tr>)}</tbody>
+      </table></div>
+      {!history.length && <p className="p-5 text-sm text-[var(--text-muted)]">No saved reports yet. Enter this month's statistics and save a draft.</p>}
+    </section>
+    {preview && <ReportPreview report={preview} onClose={() => setPreview(null)} />}
+  </div>;
 }
-
-const currentYear = new Date().getFullYear();

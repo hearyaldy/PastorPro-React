@@ -47,7 +47,6 @@ export function SettingsPage({
   const [domainsInput, setDomainsInput] = useState('sabahadventist.org, gmail.com');
   const [maintenanceMode, setMaintenanceMode] = useState(false);
   const [savingDomains, setSavingDomains] = useState(false);
-  const [showPrivacyModal, setShowPrivacyModal] = useState(false);
 
   useEffect(() => {
     applyFontScale(fontScale);
@@ -351,46 +350,13 @@ export function SettingsPage({
             <div>Offline-capable Firebase Firestore & Google Sign-In</div>
           </div>
           <div className="pt-2">
-            <button
-              type="button"
-              onClick={() => setShowPrivacyModal(true)}
-              className="text-xs font-medium text-[var(--accent-primary)] hover:underline"
-            >
-              View Privacy & Data Governance Policy
-            </button>
+            <a href="/privacy-policy" className="text-xs font-medium text-[var(--accent-primary)] hover:underline">Read Privacy Policy</a>
+            <a href="/account-deletion" className="block mt-3 text-xs font-medium text-red-700 hover:underline">Delete my account</a>
           </div>
         </div>
       </section>
 
-      {showPrivacyModal && (
-        <div className="fixed inset-0 z-50 bg-black/45 flex items-center justify-center p-4">
-          <div className="max-w-lg w-full rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-6 space-y-4">
-            <h3 className="text-base font-display font-semibold">
-              Privacy & Data Governance Policy
-            </h3>
-            <div className="text-xs text-[var(--text-secondary)] space-y-2.5 leading-relaxed max-h-[60vh] overflow-y-auto pr-1">
-              <p>
-                Account authentication uses Google Sign-In. Email addresses, profile details, pastoral assignments, and submitted ministerial or treasury ledgers are stored securely in Cloud Firestore.
-              </p>
-              <p>
-                Access is strictly scoped by role and hierarchy: personal activities, appointments, and to-dos are private to your account; Borang B, Financial/FAM, and Quarterly Department reports are accessible only to authorized church, district, and mission officers.
-              </p>
-              <p>
-                Administrative changes to login approvals, roles, unions, missions, regions, districts, and churches are recorded in the mission audit trail.
-              </p>
-            </div>
-            <div className="flex justify-end pt-2">
-              <button
-                type="button"
-                onClick={() => setShowPrivacyModal(false)}
-                className="px-4 py-2 text-xs font-medium rounded-lg bg-[var(--accent-primary)] text-white"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+
     </div>
   );
 }

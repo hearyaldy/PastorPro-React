@@ -1,6 +1,12 @@
+import { useHierarchyLabels } from '../hooks/useHierarchyLabels';
+import { StatisticsCards } from '../components/StatisticsCards';
+import { ReportPreview } from '../components/ReportPreview';
+import { activityDocument, activityStatistics } from '../lib/reportDocuments';
+import type { PrintableReport } from '../lib/pdfReport';
+import { readActivity, writeActivity } from '../lib/activities';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  addDoc,
+  setDoc,
   collection,
   deleteDoc,
   doc,
@@ -18,7 +24,8 @@ import {
   exportToCsv,
   exportToExcel,
   formatIsoDate,
-  triggerPrintPdf,
+  formatCurrencyRM,
+  MONTHS,
 } from '../lib/exportUtils';
 import { useToast } from '../components/Toast';
 import type { ActivityCategory, PastoralActivity } from '../types';
@@ -34,12 +41,16 @@ const CATEGORIES: { value: ActivityCategory; label: string }[] = [
 ];
 
 export function ActivitiesPage() {
+  const labels = useHierarchyLabels();
   const { profile } = useAuth();
   const { churches } = useMission();
   const { notify } = useToast();
 
   const [activities, setActivities] = useState<PastoralActivity[]>([]);
   const [loading, setLoading] = useState(true);
+  const [preview, setPreview] = useState<PrintableReport | null>(null);
+  const [period, setPeriod] = useState(() => `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`);
+  const [kmRate, setKmRate] = useState(() => { try { const value = localStorage.getItem('pastor_report_km_rate'); return value !== null && Number.isFinite(Number(value)) && Number(value) >= 0 ? Number(value) : 0.5; } catch { return 0.5; } });
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
 
@@ -49,6 +60,7 @@ export function ActivitiesPage() {
   const [category, setCategory] = useState<ActivityCategory>('visitation');
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [durationMinutes, setDurationMinutes] = useState(60);
+  const [mileage, setMileage] = useState(0);
   const [participants, setParticipants] = useState(2);
   const [churchId, setChurchId] = useState(profile?.churchId || '');
   const [location, setLocation] = useState('');
@@ -66,10 +78,7 @@ export function ActivitiesPage() {
       q,
       (snap) => {
         const items = snap.docs
-          .map((d) => ({
-            id: d.id,
-            ...(d.data() as Omit<PastoralActivity, 'id'>),
-          }))
+          .map((d) => readActivity(d.id, d.data()))
           .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
         setActivities(items);
         setLoading(false);
@@ -84,6 +93,7 @@ export function ActivitiesPage() {
 
   const filtered = useMemo(() => {
     return activities.filter((a) => {
+      if (period && !a.date.startsWith(period)) return false;
       if (categoryFilter !== 'all' && a.category !== categoryFilter) return false;
       if (searchTerm.trim()) {
         const s = searchTerm.toLowerCase();
@@ -96,7 +106,7 @@ export function ActivitiesPage() {
       }
       return true;
     });
-  }, [activities, categoryFilter, searchTerm]);
+  }, [activities, categoryFilter, searchTerm, period]);
 
   const openCreate = () => {
     setEditingId(null);
@@ -105,6 +115,7 @@ export function ActivitiesPage() {
     setDate(new Date().toISOString().slice(0, 10));
     setDurationMinutes(60);
     setParticipants(2);
+    setMileage(0);
     setChurchId(profile?.churchId || '');
     setLocation('');
     setNotes('');
@@ -118,6 +129,7 @@ export function ActivitiesPage() {
     setDate(act.date);
     setDurationMinutes(act.durationMinutes);
     setParticipants(act.participants ?? 1);
+    setMileage(act.mileage);
     setChurchId(act.churchId || '');
     setLocation(act.location || '');
     setNotes(act.notes || '');
@@ -129,29 +141,33 @@ export function ActivitiesPage() {
     if (!profile || !title.trim()) return;
     setSaving(true);
     const selectedChurch = churches.find((c) => c.id === churchId);
-    const missionId = profile.missionId || selectedChurch?.missionId || 'sam_sabah';
+    const missionId = profile.missionId || selectedChurch?.missionId || '';
+    const activityRef = editingId ? doc(db, 'activities', editingId) : doc(collection(db, 'activities'));
+    const previous = activities.find((activity) => activity.id === editingId);
 
     const payload = {
-      userId: profile.uid,
-      missionId,
-      ...(profile.districtId ? { districtId: profile.districtId } : {}),
-      ...(selectedChurch ? { churchId: selectedChurch.id, churchName: selectedChurch.name } : {}),
-      title: title.trim().slice(0, 160),
-      category,
-      date: date.slice(0, 32),
-      durationMinutes: Math.max(0, Math.min(10080, Number(durationMinutes) || 0)),
-      participants: Math.max(0, Math.min(50000, Number(participants) || 0)),
-      location: location.trim().slice(0, 160),
-      notes: notes.trim().slice(0, 2000),
+      ...writeActivity({
+        id: activityRef.id,
+        userId: profile.uid,
+        missionId: previous?.missionId || missionId,
+        ...(profile.districtId ? { districtId: profile.districtId } : {}),
+        ...(selectedChurch ? { churchId: selectedChurch.id, churchName: selectedChurch.name } : {}),
+        title: title.trim(), category, date,
+        mileage: Math.max(0, Number(mileage) || 0),
+        durationMinutes: Math.max(0, Math.min(10080, Number(durationMinutes) || 0)),
+        participants: Math.max(0, Math.min(50000, Number(participants) || 0)),
+        location: location.trim().slice(0, 160),
+        notes: notes.trim().slice(0, 2000),
+      }),
       updatedAt: serverTimestamp(),
     };
 
     try {
       if (editingId) {
-        await updateDoc(doc(db, 'activities', editingId), payload);
+        await updateDoc(activityRef, payload);
         notify('Pastoral activity updated.', 'success');
       } else {
-        await addDoc(collection(db, 'activities'), {
+        await setDoc(activityRef, {
           ...payload,
           createdAt: serverTimestamp(),
         });
@@ -188,6 +204,9 @@ export function ActivitiesPage() {
       DurationMinutes: a.durationMinutes,
       Participants: a.participants ?? 0,
       Notes: a.notes || '',
+      MileageKm: a.mileage,
+      RateRMPerKm: kmRate,
+      CostRM: Number((a.mileage * kmRate).toFixed(2)),
     }));
     if (type === 'csv') {
       exportToCsv(`pastoral_activities_${new Date().toISOString().slice(0, 10)}`, rows);
@@ -199,6 +218,7 @@ export function ActivitiesPage() {
     notify(`Exported ${rows.length} activities.`, 'success');
   };
 
+  const mileageStats = activityStatistics(filtered, kmRate);
   const totalMinutes = filtered.reduce((acc, a) => acc + (a.durationMinutes || 0), 0);
   const totalParticipants = filtered.reduce((acc, a) => acc + (a.participants || 0), 0);
 
@@ -252,11 +272,11 @@ export function ActivitiesPage() {
           </button>
           <button
             type="button"
-            onClick={triggerPrintPdf}
+            onClick={() => profile && setPreview(activityDocument(filtered, labels.withNames(profile), period ? `${MONTHS[Number(period.slice(5)) - 1]} ${period.slice(0, 4)}` : 'All Periods', kmRate))}
             className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)] hover:bg-[var(--bg-subtle)] whitespace-nowrap"
           >
             <Printer className="w-3.5 h-3.5" />
-            <span>Print PDF</span>
+            <span>Preview / Print PDF</span>
           </button>
           <button
             type="button"
@@ -269,28 +289,16 @@ export function ActivitiesPage() {
         </div>
       </div>
 
-      {/* Summary Strip */}
-      <div className="grid grid-cols-3 border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] divide-x divide-[var(--border-hairline)]">
-        <div className="px-5 py-3.5">
-          <div className="text-xs text-[var(--text-muted)]">Matching Entries</div>
-          <div className="text-lg font-mono-tabular font-semibold mt-0.5">
-            {filtered.length}
-          </div>
-        </div>
-        <div className="px-5 py-3.5">
-          <div className="text-xs text-[var(--text-muted)]">Total Ministry Time</div>
-          <div className="text-lg font-mono-tabular font-semibold mt-0.5">
-            {(totalMinutes / 60).toFixed(1)} hrs
-          </div>
-        </div>
-        <div className="px-5 py-3.5">
-          <div className="text-xs text-[var(--text-muted)]">People Reached</div>
-          <div className="text-lg font-mono-tabular font-semibold mt-0.5">
-            {totalParticipants.toLocaleString()}
-          </div>
-        </div>
+      <div className="flex flex-wrap items-end gap-4 no-print text-xs text-[var(--text-secondary)]">
+        <label>Report Month<input aria-label="Activity report month" type="month" value={period} onChange={e => setPeriod(e.target.value)} className="block mt-1 p-2 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)]" /></label>
+        <button onClick={() => setPeriod('')} className="p-2 underline">All Months</button>
+        <label>Rate (RM / km)<input aria-label="Mileage rate" type="number" min={0} step="0.01" value={kmRate} onChange={e => { const rate = Math.max(0, Number(e.target.value) || 0); setKmRate(rate); try { localStorage.setItem('pastor_report_km_rate', String(rate)); } catch {} }} className="block w-28 mt-1 p-2 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)]" /></label>
       </div>
-
+      <StatisticsCards featured items={[
+        { label: 'Total Activities', value: mileageStats.count, icon: 'activity' },
+        { label: 'Total Distance', value: `${mileageStats.distance.toFixed(1)} km`, icon: 'distance' },
+        { label: 'Total Cost', value: formatCurrencyRM(mileageStats.cost), icon: 'money' },
+      ]} />
       {/* Hairline Table */}
       <div className="border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] overflow-hidden print-sheet">
         {loading ? (
@@ -322,6 +330,7 @@ export function ActivitiesPage() {
                   <th className="py-3 px-4 font-medium">Title & Notes</th>
                   <th className="py-3 px-4 font-medium">Category</th>
                   <th className="py-3 px-4 font-medium">Church / Location</th>
+                  <th className="py-3 px-4 font-medium text-right">Mileage</th>
                   <th className="py-3 px-4 font-medium text-right">Duration</th>
                   <th className="py-3 px-4 font-medium text-right">Reach</th>
                   <th className="py-3 px-4 font-medium text-right no-print">Actions</th>
@@ -349,6 +358,9 @@ export function ActivitiesPage() {
                     </td>
                     <td className="py-3 px-4 text-xs text-[var(--text-secondary)]">
                       {act.churchName || act.location || '—'}
+                    </td>
+                    <td className="py-3 px-4 text-xs font-mono-tabular text-right whitespace-nowrap">
+                      {act.mileage} km
                     </td>
                     <td className="py-3 px-4 text-xs font-mono-tabular text-right whitespace-nowrap">
                       {act.durationMinutes} min
@@ -384,6 +396,8 @@ export function ActivitiesPage() {
         )}
       </div>
 
+      {preview && <ReportPreview report={preview} onClose={() => setPreview(null)} />}
+
       {/* Create/Edit Modal */}
       {modalOpen && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4 no-print">
@@ -408,7 +422,7 @@ export function ActivitiesPage() {
                 <input
                   type="text"
                   required
-                  maxLength={160}
+                  maxLength={10000}
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
                   placeholder="e.g. Sabbath Visitation at Kg. Kiulu"
@@ -470,6 +484,14 @@ export function ActivitiesPage() {
                     className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)] font-mono-tabular"
                   />
                 </div>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
+                  Mileage (km)
+                </label>
+                <input type="number" min={0} step="0.1" value={mileage}
+                  onChange={(e) => setMileage(Number(e.target.value))}
+                  className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)]" />
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>

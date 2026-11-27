@@ -1,3 +1,5 @@
+import { useHierarchyLabels } from '../hooks/useHierarchyLabels';
+import { LandingHomeLink } from './LandingHomeLink';
 import React, { useState } from 'react';
 import {
   Activity,
@@ -7,6 +9,7 @@ import {
   CheckSquare,
   Compass,
   FileCheck2,
+  FileText,
   FileSpreadsheet,
   FolderKanban,
   HeartHandshake,
@@ -40,6 +43,7 @@ export type NavRouteId =
   | 'calendar'
   | 'appointments-todos'
   | 'departments'
+  | 'admin-department-forms'
   | 'admin-console'
   | 'admin-hierarchy'
   | 'admin-users'
@@ -78,6 +82,7 @@ export function WorkspaceShell({
   headerAction,
   children,
 }: WorkspaceShellProps) {
+  const labels = useHierarchyLabels();
   const { profile, capabilities, signOut } = useAuth();
   const { theme, lightTheme, setLightTheme, toggleTheme } = useTheme();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -142,6 +147,7 @@ export function WorkspaceShell({
     {
       label: 'Administration',
       items: [
+        { id: 'admin-department-forms', label: 'Report Form Builder', icon: FileText, visible: !!profile?.isActive && (profile.userRole === 'super_admin' || profile.userRole === 'admin') },
         {
           id: 'admin-console',
           label: 'Admin Console',
@@ -202,7 +208,7 @@ export function WorkspaceShell({
               PastorPro
             </div>
             <div className="text-[11px] text-[var(--text-muted)] truncate max-w-[165px]">
-              {profile?.missionName || 'Multi-Mission Workspace'}
+              {labels.mission(profile?.missionId, profile?.missionName, 'Multi-Mission Workspace')}
             </div>
           </div>
         ) : (
@@ -427,9 +433,10 @@ export function WorkspaceShell({
             </div>
           </div>
 
-          {headerAction && (
-            <div className="flex items-center gap-2 shrink-0">{headerAction}</div>
-          )}
+          <div className="flex items-center gap-2 shrink-0">
+            {headerAction}
+            <LandingHomeLink />
+          </div>
         </header>
 
         <main className="flex-1 p-4 md:p-8 max-w-[1400px] w-full mx-auto">

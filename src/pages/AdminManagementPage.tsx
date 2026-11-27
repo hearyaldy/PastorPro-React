@@ -1,4 +1,8 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import { useHierarchyLabels } from '../hooks/useHierarchyLabels';
+import { StatisticsCards } from '../components/StatisticsCards';
+import { ReportPreview } from '../components/ReportPreview';
+import type { PrintableReport } from '../lib/pdfReport';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   addDoc,
   collection,
@@ -24,10 +28,13 @@ import {
 import { useAuth } from '../contexts/AuthContext';
 import { useMission } from '../contexts/MissionContext';
 import { db, handleFirestoreError, OperationType, reportListenerError } from '../lib/firebase';
+import { readUserProfile, writeUserUpdates } from '../lib/userProfiles';
+import { saveWithOptionalAudit } from '../lib/auditedSave';
+import { unionSaveError } from '../lib/saveErrors';
+import { missionQuery } from '../lib/queryScope';
 import { bootstrapSabahMissionBaseline } from '../lib/seedData';
 import { useToast } from '../components/Toast';
 import {
-  normalizeUserRole,
   ROLE_META,
   type Church,
   type District,
@@ -41,25 +48,6 @@ import {
 
 type AdminTab = 'approvals' | 'unions' | 'missions' | 'regions' | 'districts' | 'churches';
 
-function hydrateUserDoc(uid: string, raw: Record<string, unknown>): UserProfile {
-  const userRole = normalizeUserRole(raw);
-  return {
-    ...(raw as unknown as UserProfile),
-    uid,
-    email: String(raw.email || ''),
-    displayName: String(raw.displayName || raw.name || raw.email || uid),
-    userRole,
-    role: raw.role ? String(raw.role) : userRole,
-    roleTitle: raw.roleTitle ? String(raw.roleTitle) : ROLE_META[userRole].label,
-    level: typeof raw.level === 'number' ? raw.level : ROLE_META[userRole].level,
-    missionId: String(raw.missionId || raw.mission || ''),
-    missionName: String(raw.missionName || ''),
-    districtId: String(raw.districtId || raw.district || ''),
-    districtName: String(raw.districtName || ''),
-    isActive: raw.isActive !== false,
-    onboardingCompleted: Boolean(raw.onboardingCompleted),
-  };
-}
 
 function resolveApprovalStatus(u: UserProfile): UserApprovalStatus {
   if (
@@ -72,11 +60,13 @@ function resolveApprovalStatus(u: UserProfile): UserApprovalStatus {
   return u.isActive === false ? 'rejected' : 'approved';
 }
 
-export function AdminManagementPage() {
+export function AdminManagementPage({ onManageDepartmentForms }: { onManageDepartmentForms?: () => void }) {
+  const labels = useHierarchyLabels();
   const { profile, capabilities } = useAuth();
   const { unions, missions, regions, districts, churches, logAdminActivity } = useMission();
   const { notify } = useToast();
 
+  const [preview, setPreview] = useState<PrintableReport | null>(null);
   const [tab, setTab] = useState<AdminTab>('approvals');
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(true);
@@ -98,6 +88,9 @@ export function AdminManagementPage() {
   const [unionCountry, setUnionCountry] = useState('Malaysia');
   const [unionHq, setUnionHq] = useState('');
   const [editingUnion, setEditingUnion] = useState<Union | null>(null);
+  const [savingUnion, setSavingUnion] = useState(false);
+  const [unionError, setUnionError] = useState<string | null>(null);
+  const unionSaveInFlight = useRef(false);
 
   // Mission form & edit
   const [missionUnionId, setMissionUnionId] = useState('');
@@ -139,13 +132,9 @@ export function AdminManagementPage() {
     setLoadingUsers(true);
     setUsersError(null);
 
-    let fallbackUnsub: (() => void) | null = null;
-    const isScopedMissionAdmin =
-      profile.userRole === 'mission_admin' && Boolean(profile.missionId);
-
     const handleSnap = (snap: { docs: { id: string; data: () => Record<string, unknown> }[] }) => {
       const items = snap.docs
-        .map((d) => hydrateUserDoc(d.id, d.data()))
+        .map((d) => readUserProfile(d.id, d.data()))
         .sort((a, b) => String(a.displayName || '').localeCompare(String(b.displayName || '')));
       setUsers(items);
       setUsersError(null);
@@ -153,27 +142,15 @@ export function AdminManagementPage() {
     };
 
     const unsub = onSnapshot(
-      collection(db, 'users'),
+      missionQuery(db, 'users', profile),
       handleSnap,
       (err) => {
-        if (isScopedMissionAdmin) {
-          fallbackUnsub = onSnapshot(
-            query(collection(db, 'users'), where('mission', '==', profile.missionId)),
-            handleSnap,
-            (err2) => {
-              setLoadingUsers(false);
-              setUsersError(reportListenerError(err2, OperationType.LIST, 'users'));
-            },
-          );
-          return;
-        }
         setLoadingUsers(false);
         setUsersError(reportListenerError(err, OperationType.LIST, 'users'));
       },
     );
     return () => {
       unsub();
-      if (fallbackUnsub) fallbackUnsub();
     };
   }, [profile, capabilities.canManageUsers]);
 
@@ -209,14 +186,14 @@ export function AdminManagementPage() {
         return (
           u.displayName.toLowerCase().includes(s) ||
           u.email.toLowerCase().includes(s) ||
-          (u.missionName || '').toLowerCase().includes(s) ||
-          (u.districtName || '').toLowerCase().includes(s) ||
-          (u.churchName || '').toLowerCase().includes(s)
+          labels.mission(u.missionId, u.missionName).toLowerCase().includes(s) ||
+          labels.district(u.districtId, u.districtName).toLowerCase().includes(s) ||
+          labels.church(u.churchId, u.churchName).toLowerCase().includes(s)
         );
       }
       return true;
     });
-  }, [users, approvalFilter, userSearch]);
+  }, [users, approvalFilter, userSearch, labels]);
 
   const filteredRegions = useMemo(
     () =>
@@ -275,7 +252,7 @@ export function AdminManagementPage() {
   ) => {
     try {
       await updateDoc(doc(db, 'users', target.uid), {
-        ...updates,
+        ...writeUserUpdates(updates, target),
         updatedAt: serverTimestamp(),
       });
       await logAdminActivity('UPDATE_USER', 'users', summary, target.uid);
@@ -344,37 +321,58 @@ export function AdminManagementPage() {
   // --- UNION CRUD ---
   const handleSaveUnion = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!unionName.trim() || !unionCode.trim()) return;
+    if (unionSaveInFlight.current) return;
+    setUnionError(null);
+    if (!capabilities.canManageUnions) {
+      setUnionError('Union changes require an active Admin or Super Admin account.');
+      return;
+    }
+    if (!unionName.trim() || !unionCode.trim()) {
+      setUnionError('Enter a Union name and code.');
+      return;
+    }
+    unionSaveInFlight.current = true;
+    setSavingUnion(true);
+    const editing = editingUnion;
+    const name = unionName.trim().slice(0, 120);
+    const payload = {
+      name,
+      code: unionCode.trim().toUpperCase().slice(0, 24),
+      country: unionCountry.trim().slice(0, 80),
+      headquarters: unionHq.trim().slice(0, 200),
+      updatedAt: serverTimestamp(),
+    };
     try {
-      if (editingUnion) {
-        await updateDoc(doc(db, 'unions', editingUnion.id), {
-          name: unionName.trim().slice(0, 120),
-          code: unionCode.trim().toUpperCase().slice(0, 24),
-          country: unionCountry.trim().slice(0, 80),
-          headquarters: unionHq.trim().slice(0, 200),
-          updatedAt: serverTimestamp(),
-        });
-        await logAdminActivity('UPDATE_UNION', 'unions', `Updated union ${unionName}`, editingUnion.id);
-        setEditingUnion(null);
-        notify('Union updated.', 'success');
-      } else {
-        const ref = await addDoc(collection(db, 'unions'), {
-          name: unionName.trim().slice(0, 120),
-          code: unionCode.trim().toUpperCase().slice(0, 24),
-          country: unionCountry.trim().slice(0, 80),
-          headquarters: unionHq.trim().slice(0, 200),
-          isActive: true,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-        await logAdminActivity('CREATE_UNION', 'unions', `Created union ${unionName}`, ref.id);
-        notify('Union created.', 'success');
-      }
+      const { auditResult } = await saveWithOptionalAudit(
+        async () => {
+          if (editing) {
+            await updateDoc(doc(db, 'unions', editing.id), payload);
+            return editing.id;
+          }
+          const ref = await addDoc(collection(db, 'unions'), {
+            ...payload, isActive: true, createdAt: serverTimestamp(),
+          });
+          return ref.id;
+        },
+        (id) => logAdminActivity(
+          editing ? 'UPDATE_UNION' : 'CREATE_UNION', 'unions',
+          `${editing ? 'Updated' : 'Created'} union ${name}`, id,
+        ),
+      );
+      setEditingUnion(null);
       setUnionName('');
       setUnionCode('');
       setUnionHq('');
+      notify(editing ? 'Union updated.' : 'Union created.', 'success');
+      void auditResult.then(({ error }) => {
+        if (error) notify('Union saved, but its audit entry could not be recorded.', 'info');
+      });
     } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, 'unions');
+      reportListenerError(err, OperationType.WRITE, 'unions');
+      setUnionError(unionSaveError(err));
+    } finally {
+      unionSaveInFlight.current = false;
+      setSavingUnion(false);
     }
   };
 
@@ -569,51 +567,20 @@ export function AdminManagementPage() {
 
   return (
     <div className="space-y-6">
-      {/* Top KPI Summary Strip */}
-      <section className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] p-4">
-          <div className="text-xs text-[var(--text-muted)]">Pending Login Approvals</div>
-          <div
-            className={`text-2xl font-display font-semibold mt-1 font-mono-tabular ${
-              pendingUsers.length > 0
-                ? 'text-amber-700 dark:text-amber-400'
-                : 'text-[var(--text-primary)]'
-            }`}
-          >
-            {pendingUsers.length}
-          </div>
-          <div className="text-[11px] text-[var(--text-secondary)] mt-1">
-            {pendingUsers.length > 0 ? 'Awaiting administrator decision' : 'All sign-ins reviewed'}
-          </div>
-        </div>
-        <div className="border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] p-4">
-          <div className="text-xs text-[var(--text-muted)]">Approved Active Accounts</div>
-          <div className="text-2xl font-display font-semibold mt-1 font-mono-tabular">
-            {approvedActiveCount} / {users.length}
-          </div>
-          <div className="text-[11px] text-[var(--text-secondary)] mt-1">
-            Verified Google workspace logins
-          </div>
-        </div>
-        <div className="border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] p-4">
-          <div className="text-xs text-[var(--text-muted)]">Unions & Missions</div>
-          <div className="text-2xl font-display font-semibold mt-1 font-mono-tabular">
-            {unions.length} · {missions.length}
-          </div>
-          <div className="text-[11px] text-[var(--text-secondary)] mt-1">
-            Top-level administrative bodies
-          </div>
-        </div>
-        <div className="border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] p-4">
-          <div className="text-xs text-[var(--text-muted)]">Regions · Districts · Churches</div>
-          <div className="text-2xl font-display font-semibold mt-1 font-mono-tabular">
-            {regions.length} · {districts.length} · {churches.length}
-          </div>
-          <div className="text-[11px] text-[var(--text-secondary)] mt-1">
-            Field pastoral & church directory
-          </div>
-        </div>
-      </section>
+      {profile?.isActive && ['super_admin', 'admin'].includes(profile.userRole) && onManageDepartmentForms && <div className="rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-5 flex flex-wrap items-center justify-between gap-4"><div><h3 className="font-semibold">Department report forms</h3><p className="text-sm text-[var(--text-secondary)] mt-1">Build report questions, publish forms, and review church responses.</p></div><button className="px-4 py-2 rounded-lg bg-purple-700 text-white text-sm" onClick={onManageDepartmentForms}>Open Form Builder</button></div>}
+
+      <StatisticsCards items={[
+        { label: 'Pending Login Approvals', value: pendingUsers.length, icon: 'calendar', color: 'orange' },
+        { label: 'Approved Active Accounts', value: `${approvedActiveCount} / ${users.length}`, icon: 'check', color: 'green' },
+        { label: 'Unions & Missions', value: `${unions.length} / ${missions.length}`, icon: 'people', color: 'blue' },
+        { label: 'Regions / Districts / Churches', value: `${regions.length} / ${districts.length} / ${churches.length}`, icon: 'distance', color: 'purple' },
+      ]} />
+      <button className="no-print text-xs border border-[var(--border-hairline)] rounded-lg px-3 py-2" onClick={() => setPreview({
+        title: 'Administration Statistics', subtitle: profile?.missionName || 'Workspace', filename: 'Administration_Statistics',
+        sections: [{ title: 'Account Overview', rows: [['Pending Approvals', pendingUsers.length], ['Approved Active Accounts', approvedActiveCount], ['Visible Accounts', users.length]] },
+          { title: 'Hierarchy Overview', rows: [['Unions', unions.length], ['Missions', missions.length], ['Regions', regions.length], ['Districts', districts.length], ['Churches', churches.length]] }],
+      })}>Preview / Print Statistics</button>
+      {preview && <ReportPreview report={preview} onClose={() => setPreview(null)} />}
 
       {/* Toolbar: Segmented Navigation + Baseline Seed */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
@@ -1054,6 +1021,7 @@ export function AdminManagementPage() {
           {capabilities.canManageUnions ? (
             <form
               onSubmit={handleSaveUnion}
+              aria-busy={savingUnion}
               className="border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] p-5 space-y-3"
             >
               <div className="flex items-center justify-between">
@@ -1075,7 +1043,12 @@ export function AdminManagementPage() {
                   </button>
                 )}
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-5 gap-3 items-end">
+              {unionError && (
+                <p role="alert" className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-950/30 dark:text-red-200">
+                  {unionError}
+                </p>
+              )}
+              <fieldset disabled={savingUnion} className="grid grid-cols-1 sm:grid-cols-5 gap-3 items-end disabled:opacity-60">
                 <div className="sm:col-span-2">
                   <label className="block text-xs text-[var(--text-secondary)] mb-1">
                     Union Name *
@@ -1122,9 +1095,9 @@ export function AdminManagementPage() {
                   className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-medium rounded-lg bg-[var(--accent-primary)] text-white h-[38px] whitespace-nowrap"
                 >
                   {editingUnion ? <Check className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
-                  <span>{editingUnion ? 'Save Union' : 'Add Union'}</span>
+                  <span>{savingUnion ? 'Saving...' : editingUnion ? 'Save Union' : 'Add Union'}</span>
                 </button>
-              </div>
+              </fieldset>
             </form>
           ) : (
             <div className="p-4 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] text-xs text-[var(--text-secondary)]">
@@ -1340,7 +1313,7 @@ export function AdminManagementPage() {
                   const rCount = regions.filter((r) => r.missionId === m.id).length;
                   const cCount = churches.filter((c) => c.missionId === m.id).length;
                   const unionLabel =
-                    unions.find((u) => u.id === m.unionId)?.name || m.unionName || '—';
+                    labels.union(m.unionId, m.unionName);
                   return (
                     <tr key={m.id} className="hover:bg-[var(--bg-subtle)]/40">
                       <td className="py-3 px-4 font-mono-tabular text-xs font-semibold">
@@ -1516,7 +1489,7 @@ export function AdminManagementPage() {
                       </td>
                       <td className="py-3 px-4 font-medium">{r.name}</td>
                       <td className="py-3 px-4 text-xs text-[var(--text-secondary)]">
-                        {missions.find((m) => m.id === r.missionId)?.name || r.missionId}
+                        {labels.mission(r.missionId)}
                       </td>
                       <td className="py-3 px-4 text-right font-mono-tabular text-xs">
                         {dCount} · {cCount}
@@ -1670,7 +1643,7 @@ export function AdminManagementPage() {
                     <tr key={d.id} className="hover:bg-[var(--bg-subtle)]/40">
                       <td className="py-3 px-4 font-medium">{d.name}</td>
                       <td className="py-3 px-4 text-xs text-[var(--text-secondary)]">
-                        {regions.find((r) => r.id === d.regionId)?.name || d.regionId}
+                        {labels.region(d.regionId)}
                       </td>
                       <td className="py-3 px-4 text-xs text-[var(--text-secondary)]">
                         {d.districtPastorName || 'Unassigned'}
@@ -1868,10 +1841,10 @@ export function AdminManagementPage() {
                       </td>
                       <td className="py-3 px-4 font-medium">{c.name}</td>
                       <td className="py-3 px-4 text-xs text-[var(--text-secondary)]">
-                        {districts.find((d) => d.id === c.districtId)?.name || c.districtId}
+                        {labels.district(c.districtId)}
                       </td>
                       <td className="py-3 px-4 text-xs text-[var(--text-secondary)]">
-                        {regions.find((r) => r.id === c.regionId)?.name || c.regionId}
+                        {labels.region(c.regionId)}
                       </td>
                       <td className="py-3 px-4 text-xs text-[var(--text-secondary)]">
                         {c.treasurerName || '—'}
