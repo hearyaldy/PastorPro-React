@@ -501,8 +501,25 @@ Implementation, retention boundaries and exact deployment scope:
       that branch’s root. Repository visibility remains private; main is unchanged.
 - [x] Verify Pages build `built` at the published commit, HTTP 200, expected
       page content/assets and live Chrome behavior with no page errors.
-- [ ] Configure the live WebApp URL in `landing/config.js` when supplied. The user
-      requested the landing page first; no fake deployed URL was substituted.
+- [x] Deploy the React app to https://pastor-report-e4c52.web.app/ and configure
+      all landing WebApp buttons with that live URL (user authorized deployment).
+
+## WebApp hosting — 2026-11-27
+
+- [x] Add isolated `firebase.hosting.json` for built app assets, SPA routes,
+      cache behavior and response headers; ignore local Firebase deployment cache.
+- [x] Build and deploy Hosting release `779bc49bf68e9972`; leave pending database
+      rules and account-services function deployments unchanged.
+- [x] Verify Firebase Auth authorizes `pastor-report-e4c52.web.app`.
+- [x] Chrome regression test passes for configured WebApp buttons, responsive
+      landing layout and unconfigured URL fallback.
+- [x] Publish the WebApp link to `gh-pages`, commit
+      `e12dee0607d694edf4d0c6570607b01805c40eb1`.
+- [x] Verify GitHub Pages built that commit; live Chrome navigation from landing
+      to app and back succeeds, privacy/deletion routes return HTTP 200 and
+      render correctly, and no page errors occur.
+- [ ] Verify signed-in workflows with the user's account; deployment checks
+      did not sign in or modify production user/report records.
 
 Source and setup: `LANDING_PAGE.md`. Local preview: `/landing/`.
 

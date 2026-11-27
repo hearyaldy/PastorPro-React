@@ -8,6 +8,8 @@ Firebase or read account data. The preview uses explicitly labelled sample data.
 - `script.js`: accessible tabs, privacy disclosure and WebApp launch behavior.
 - `config.js`: set `window.PASTORPRO_WEBAPP_URL` to the deployed HTTPS app URL.
 
+Live WebApp: https://pastor-report-e4c52.web.app/ . All WebApp buttons use this URL.
+
 Local preview: start the existing Vite server and visit `/landing/`. With no live
 URL configured, WebApp opens that local app. On a published host, it opens an
 honest setup message until the URL is configured, rather than linking to a fake

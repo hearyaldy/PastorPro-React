@@ -11,16 +11,23 @@ and closing call to action.
 
 ## WebApp link
 
-No deployed WebApp URL was supplied. Read-only checks found no repo homepage
-URL, and the Firebase project’s default Hosting domains return Site Not Found.
-The user requested the landing page first. `landing/config.js` therefore keeps
-`PASTORPRO_WEBAPP_URL` empty for now.
+The React WebApp is deployed to https://pastor-report-e4c52.web.app/ .
+`landing/config.js` connects all three WebApp buttons to this URL, including
+when previewing the landing page locally.
 
-- Local Vite preview (`http://127.0.0.1:3000/landing/`): WebApp opens the running app.
-- Published page: WebApp opens an honest link-not-configured dialog. It does not
-  send visitors to a nonexistent host or a different application.
-- Set `window.PASTORPRO_WEBAPP_URL` in `config.js` to the deployed HTTPS app URL
-  when available. That activates all three buttons without rebuilding.
+- If the configured URL is removed, localhost falls back to the local app;
+  published hosts display the link-not-configured dialog.
+- Deploy the app with `npm run build` followed by
+  `firebase deploy --only hosting --config firebase.hosting.json --project pastor-report-e4c52`.
+  This separate config publishes `dist/` with SPA rewrites; it does not deploy
+  Firestore rules or account-deletion functions.
+- Firebase Hosting release: `779bc49bf68e9972` (2026-11-27).
+
+Live Chrome verification passed: the published landing button opens the app's
+sign-in screen, Home returns to the landing page, and `/privacy-policy` and
+`/account-deletion` render over HTTPS with HTTP 200 and no page errors. Firebase
+Auth's public configuration includes the Hosting domain. Signed-in report
+workflows were not exercised with a real user account.
 
 ## Repository publication
 
@@ -33,6 +40,7 @@ The local app working tree, backend, audit documents and unpublished changes wer
 not included in the public Pages artifact. The app’s `main` branch was not moved.
 
 Source commit: `97cea05d7f298907e56af4e8c262e2f04e5b3974`.
+WebApp link update: `e12dee0607d694edf4d0c6570607b01805c40eb1`.
 Pages source: `gh-pages`, `/`, with `.nojekyll`.
 Target URL: https://hearyaldy.github.io/PastorPro-React/
 
