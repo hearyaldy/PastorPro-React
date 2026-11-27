@@ -19,7 +19,7 @@ import {
   X,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { useTheme } from '../contexts/ThemeContext';
+import { LIGHT_THEME_PRESETS, useTheme } from '../contexts/ThemeContext';
 import { ROLE_META } from '../types';
 
 export type NavRouteId =
@@ -64,7 +64,7 @@ export function WorkspaceShell({
   children,
 }: WorkspaceShellProps) {
   const { profile, capabilities, signOut } = useAuth();
-  const { theme, toggleTheme } = useTheme();
+  const { theme, lightTheme, setLightTheme, toggleTheme } = useTheme();
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const navGroups: NavGroup[] = [
@@ -147,7 +147,7 @@ export function WorkspaceShell({
   };
 
   const sidebarContent = (
-    <div className="flex flex-col h-full bg-[var(--bg-surface)] border-r border-[var(--border-hairline)]">
+    <div className="flex flex-col h-full bg-[var(--bg-sidebar)] border-r border-[var(--border-hairline)] transition-colors duration-200">
       <div className="px-5 py-4 border-b border-[var(--border-hairline)] flex items-center justify-between">
         <div>
           <div className="text-base font-display font-semibold tracking-tight text-[var(--text-primary)] whitespace-nowrap">
@@ -187,8 +187,8 @@ export function WorkspaceShell({
                       onClick={() => handleSelect(item.id)}
                       className={`w-full flex items-center gap-2.5 px-2.5 py-2 text-sm rounded-lg transition-colors whitespace-nowrap shrink-0 ${
                         active
-                          ? 'bg-[var(--accent-soft)] text-[var(--accent-primary)] font-medium'
-                          : 'text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text-primary)]'
+                          ? 'bg-[var(--accent-soft)] text-[var(--accent-primary)] font-semibold border border-[var(--accent-primary)]/15'
+                          : 'text-[var(--text-secondary)] hover:bg-[var(--bg-surface)]/70 hover:text-[var(--text-primary)]'
                       }`}
                     >
                       <Icon className="w-4 h-4 shrink-0" />
@@ -223,6 +223,31 @@ export function WorkspaceShell({
             <div className="text-[11px] text-[var(--text-muted)] truncate">
               {profile ? ROLE_META[profile.userRole].label : 'User'}
             </div>
+          </div>
+        </div>
+        <div className="flex items-center justify-between gap-1.5 pt-1">
+          <span className="text-[11px] text-[var(--text-muted)]">Light theme</span>
+          <div className="flex items-center gap-1.5">
+            {LIGHT_THEME_PRESETS.map((preset) => {
+              const selected = theme === 'light' && lightTheme === preset.id;
+              return (
+                <button
+                  key={preset.id}
+                  type="button"
+                  title={preset.label}
+                  aria-label={`Select ${preset.label} light theme`}
+                  onClick={() => setLightTheme(preset.id)}
+                  className={`w-4 h-4 rounded-sm border overflow-hidden flex transition-transform ${
+                    selected
+                      ? 'ring-2 ring-[var(--text-primary)] ring-offset-1 ring-offset-[var(--bg-sidebar)] scale-105'
+                      : 'border-[var(--border-hairline)] hover:scale-105'
+                  }`}
+                >
+                  <span className="w-1/2 h-full" style={{ backgroundColor: preset.sidebar }} />
+                  <span className="w-1/2 h-full" style={{ backgroundColor: preset.accent }} />
+                </button>
+              );
+            })}
           </div>
         </div>
         <div className="flex items-center justify-between gap-2 pt-1">
@@ -278,7 +303,7 @@ export function WorkspaceShell({
 
       {/* Main Content */}
       <div className="flex-1 min-w-0 flex flex-col">
-        <header className="sticky top-0 z-30 bg-[var(--bg-surface)]/95 backdrop-blur-sm border-b border-[var(--border-hairline)] px-4 md:px-8 py-3.5 flex items-center justify-between gap-4 no-print">
+        <header className="sticky top-0 z-30 bg-[var(--bg-header)]/95 backdrop-blur-sm border-b border-[var(--border-hairline)] px-4 md:px-8 py-3.5 flex items-center justify-between gap-4 no-print transition-colors duration-200">
           <div className="flex items-center gap-3 min-w-0">
             <button
               type="button"

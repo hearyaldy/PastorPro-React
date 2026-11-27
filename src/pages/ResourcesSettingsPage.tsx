@@ -10,7 +10,7 @@ import {
 import { ExternalLink, FileText, Moon, Plus, Sun, Trash2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useMission } from '../contexts/MissionContext';
-import { useTheme } from '../contexts/ThemeContext';
+import { LIGHT_THEME_PRESETS, useTheme } from '../contexts/ThemeContext';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { useToast } from '../components/Toast';
 import { ROLE_META } from '../types';
@@ -18,7 +18,7 @@ import { ROLE_META } from '../types';
 export function ResourcesSettingsPage() {
   const { profile, capabilities, updateOwnProfile } = useAuth();
   const { resources, missions, logAdminActivity } = useMission();
-  const { theme, setTheme } = useTheme();
+  const { theme, lightTheme, setTheme, setLightTheme } = useTheme();
   const { notify } = useToast();
 
   // Profile form
@@ -287,33 +287,65 @@ export function ResourcesSettingsPage() {
           </form>
         </div>
 
-        <div className="border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] p-5 space-y-3">
-          <h3 className="text-sm font-semibold">Workspace Appearance</h3>
-          <div className="grid grid-cols-2 gap-3">
+        <div className="border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold">Workspace Appearance</h3>
             <button
               type="button"
-              onClick={() => setTheme('light')}
-              className={`flex items-center justify-center gap-2 px-3 py-2.5 text-xs font-medium rounded-lg border ${
-                theme === 'light'
-                  ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
-                  : 'border-[var(--border-hairline)]'
-              }`}
+              onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md border border-[var(--border-hairline)] hover:bg-[var(--bg-subtle)]"
             >
-              <Sun className="w-3.5 h-3.5" />
-              <span>Light Editorial</span>
+              {theme === 'light' ? (
+                <>
+                  <Moon className="w-3.5 h-3.5" />
+                  <span>Switch to Dark</span>
+                </>
+              ) : (
+                <>
+                  <Sun className="w-3.5 h-3.5" />
+                  <span>Switch to Light</span>
+                </>
+              )}
             </button>
-            <button
-              type="button"
-              onClick={() => setTheme('dark')}
-              className={`flex items-center justify-center gap-2 px-3 py-2.5 text-xs font-medium rounded-lg border ${
-                theme === 'dark'
-                  ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
-                  : 'border-[var(--border-hairline)]'
-              }`}
-            >
-              <Moon className="w-3.5 h-3.5" />
-              <span>Dark Console</span>
-            </button>
+          </div>
+
+          <div className="space-y-2">
+            <div className="text-xs text-[var(--text-muted)]">Non-Dark Editorial Themes</div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {LIGHT_THEME_PRESETS.map((preset) => {
+                const active = theme === 'light' && lightTheme === preset.id;
+                return (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => setLightTheme(preset.id)}
+                    className={`flex items-center gap-2.5 px-3 py-2 text-xs font-medium rounded-lg border text-left transition-colors ${
+                      active
+                        ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
+                        : 'border-[var(--border-hairline)] hover:bg-[var(--bg-subtle)]'
+                    }`}
+                  >
+                    <span className="w-5 h-5 rounded-sm border border-black/15 overflow-hidden flex shrink-0">
+                      <span className="w-1/2 h-full" style={{ backgroundColor: preset.sidebar }} />
+                      <span className="w-1/2 h-full" style={{ backgroundColor: preset.accent }} />
+                    </span>
+                    <span className="truncate">{preset.label}</span>
+                  </button>
+                );
+              })}
+              <button
+                type="button"
+                onClick={() => setTheme('dark')}
+                className={`flex items-center gap-2.5 px-3 py-2 text-xs font-medium rounded-lg border text-left transition-colors ${
+                  theme === 'dark'
+                    ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)] text-[var(--accent-primary)]'
+                    : 'border-[var(--border-hairline)] hover:bg-[var(--bg-subtle)]'
+                }`}
+              >
+                <Moon className="w-4 h-4 shrink-0" />
+                <span className="truncate">Dark Console</span>
+              </button>
+            </div>
           </div>
         </div>
 

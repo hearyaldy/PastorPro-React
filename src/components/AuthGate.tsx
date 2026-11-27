@@ -1,12 +1,11 @@
 import { useState } from 'react';
-import { ArrowRight, BookOpen, CalendarDays, FileSpreadsheet, ShieldCheck } from 'lucide-react';
+import { ArrowRight, BookOpen, CalendarDays, FileSpreadsheet, ShieldCheck, Sun, Moon } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { useTheme } from '../contexts/ThemeContext';
-import { Sun, Moon } from 'lucide-react';
+import { LIGHT_THEME_PRESETS, useTheme } from '../contexts/ThemeContext';
 
 export function AuthGate() {
   const { signInWithGoogle, authError, connectionOk } = useAuth();
-  const { theme, toggleTheme } = useTheme();
+  const { theme, lightTheme, toggleTheme, setLightTheme } = useTheme();
   const [signingIn, setSigningIn] = useState(false);
 
   const handleSignIn = async () => {
@@ -22,16 +21,38 @@ export function AuthGate() {
 
   return (
     <div className="min-h-screen bg-[var(--bg-canvas)] text-[var(--text-primary)] flex flex-col">
-      <header className="flex items-center justify-between gap-8 px-6 md:px-10 py-4 border-b border-[var(--border-hairline)] bg-[var(--bg-surface)]">
+      <header className="flex items-center justify-between gap-6 px-6 md:px-10 py-4 border-b border-[var(--border-hairline)] bg-[var(--bg-header)]">
         <div className="text-lg font-display font-semibold tracking-tight whitespace-nowrap shrink-0">
           Pastor Report
         </div>
-        <div className="flex items-center gap-4 shrink-0">
+        <div className="flex items-center gap-3 shrink-0">
+          <div className="hidden sm:flex items-center gap-1.5 pr-1">
+            {LIGHT_THEME_PRESETS.map((preset) => {
+              const selected = theme === 'light' && lightTheme === preset.id;
+              return (
+                <button
+                  key={preset.id}
+                  type="button"
+                  onClick={() => setLightTheme(preset.id)}
+                  title={`${preset.label} theme`}
+                  aria-label={`Select ${preset.label} theme`}
+                  className={`w-5 h-5 rounded-md overflow-hidden grid grid-cols-2 transition-transform ${
+                    selected
+                      ? 'ring-2 ring-[var(--text-primary)] ring-offset-2 ring-offset-[var(--bg-header)] scale-105'
+                      : 'border border-[var(--border-hairline)] opacity-80 hover:opacity-100'
+                  }`}
+                >
+                  <span style={{ backgroundColor: preset.sidebar }} />
+                  <span style={{ backgroundColor: preset.accent }} />
+                </button>
+              );
+            })}
+          </div>
           <button
             type="button"
             onClick={toggleTheme}
-            className="p-2 rounded-lg border border-[var(--border-hairline)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
-            aria-label="Toggle theme"
+            className="p-2 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+            aria-label="Toggle dark mode"
           >
             {theme === 'light' ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
           </button>

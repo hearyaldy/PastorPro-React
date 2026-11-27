@@ -2,23 +2,88 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 @layer base {
-  :root {
-    --bg-canvas: #FAF9F7;
+  :root,
+  :root[data-light-theme="forest"] {
+    --bg-canvas: #F2F0E9;
     --bg-surface: #FFFFFF;
-    --bg-subtle: #F3F2EE;
-    --border-hairline: #E5E4DF;
-    --text-primary: #141815;
-    --text-secondary: #4B5550;
-    --text-muted: #717A74;
+    --bg-subtle: #EAE6DC;
+    --bg-sidebar: #E6EAE2;
+    --bg-header: #F7F6F1;
+    --border-hairline: #D4D7CE;
+    --text-primary: #131D16;
+    --text-secondary: #3E4F43;
+    --text-muted: #65746A;
     --accent-primary: #14532D;
     --accent-hover: #166534;
-    --accent-soft: #ECFDF5;
+    --accent-soft: #DCFCE7;
+  }
+
+  :root[data-light-theme="navy"] {
+    --bg-canvas: #E8EEF6;
+    --bg-surface: #FFFFFF;
+    --bg-subtle: #DCE5F2;
+    --bg-sidebar: #D6E1F0;
+    --bg-header: #F2F6FB;
+    --border-hairline: #C2D0E4;
+    --text-primary: #0F1B33;
+    --text-secondary: #374967;
+    --text-muted: #5C6F8E;
+    --accent-primary: #1E3A8A;
+    --accent-hover: #1D4ED8;
+    --accent-soft: #DBEAFE;
+  }
+
+  :root[data-light-theme="cobalt"] {
+    --bg-canvas: #E5F0EE;
+    --bg-surface: #FCFDFE;
+    --bg-subtle: #D5E7E4;
+    --bg-sidebar: #CFE4E0;
+    --bg-header: #EFF7F6;
+    --border-hairline: #B8D2CE;
+    --text-primary: #0D2220;
+    --text-secondary: #325350;
+    --text-muted: #577773;
+    --accent-primary: #0F766E;
+    --accent-hover: #115E59;
+    --accent-soft: #CCFBF1;
+  }
+
+  :root[data-light-theme="burgundy"] {
+    --bg-canvas: #F4EAEB;
+    --bg-surface: #FFFDFD;
+    --bg-subtle: #EADADC;
+    --bg-sidebar: #E8D5D8;
+    --bg-header: #FAF3F4;
+    --border-hairline: #DBC2C6;
+    --text-primary: #261217;
+    --text-secondary: #5B3C43;
+    --text-muted: #7D5E65;
+    --accent-primary: #881337;
+    --accent-hover: #9F1239;
+    --accent-soft: #FFE4E6;
+  }
+
+  :root[data-light-theme="olive"] {
+    --bg-canvas: #F1EDE0;
+    --bg-surface: #FDFCF7;
+    --bg-subtle: #E6DFCB;
+    --bg-sidebar: #E2DAC2;
+    --bg-header: #F8F5EC;
+    --border-hairline: #D4CAB0;
+    --text-primary: #211F12;
+    --text-secondary: #4E4A35;
+    --text-muted: #716D56;
+    --accent-primary: #3F6212;
+    --accent-hover: #4D7C0F;
+    --accent-soft: #ECFCCB;
   }
 
   .dark {
     --bg-canvas: #0B1117;
     --bg-surface: #111922;
     --bg-subtle: #17212B;
+    --bg-sidebar: #0E151E;
+    --bg-header: #111922;
     --border-hairline: #232F3E;
     --text-primary: #F1F5F9;
     --text-secondary: #CBD5E1;
