@@ -574,3 +574,24 @@ Current destinations and publication instructions: `LANDING_PAGE.md`.
       of the previous light preset. TypeScript/build and whitespace checks pass.
 - [x] GitHub Pages built commit `f8eed5d`; live Chrome regression passes all
       palette/theme persistence checks along with public routes and navigation.
+
+## Borang B Google Forms style — 2026-11-27
+
+- [x] Apply the Quarterly Departments form presentation: centered question cards,
+      section heading, section picker, Back/Next navigation and section progress.
+- [x] Include all seven numeric sections and optional additional information,
+      followed by a complete review before Submit Report / Update Submission.
+- [x] Keep period selection, save status, autosave/manual save, report history,
+      statistics overview and Preview / Print; preserve the Flutter field/storage
+      contract and existing conflict/duplicate/unsaved-entry safeguards.
+- [x] Extract a presentation-only component; test every numeric/text answer,
+      zero/currency values, draft save, navigation retention, failed submission,
+      blocked saves and final submission without writing production records.
+- [x] Inspect desktop/light and mobile/dark screenshots; correct narrow-screen
+      grid sizing and verify no horizontal overflow.
+- [x] Keep save errors and conflict-reload action beside final submission;
+      use readable dark-theme error/accent colors. TypeScript, 37 unit tests,
+      8 browser tests and the built Pages browser test pass.
+- [x] GitHub Pages built `5f2873d`; live JavaScript/CSS match the tested artifact
+      byte-for-byte. Live Pages navigation/dark-mode/public-route checks pass.
+- [ ] Verify the signed-in report flow with the user's own account.

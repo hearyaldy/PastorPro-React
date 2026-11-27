@@ -176,6 +176,27 @@
 /* Department forms: a focused question canvas and form-builder workspace. */
 .department-forms { --df-purple: #673ab7; --df-paper: var(--bg-surface, #fff); --df-border: #dadce0; color: var(--text-primary); background: color-mix(in srgb, var(--df-purple) 7%, var(--bg-canvas)); padding: 24px; border-radius: 14px; min-width: 0; }
 .df-form-column { max-width: 780px; margin: 0 auto; display: grid; gap: 14px; }
+.borang-b-forms { --df-border: var(--border-hairline); }
+.borang-b-forms > .df-form-column, .borang-b-forms > .df-form-column > * { min-width: 0; }
+.bb-form-flow, .bb-questions, .bb-review { display: grid; gap: 14px; min-width: 0; }
+.bb-questions { border: 0; margin: 0; padding: 0; }
+.bb-section-picker { display: grid; gap: 12px; }
+.bb-section-picker > label { font-size: 14px; font-weight: 500; }
+.bb-section-picker > select, .bb-questions textarea { width: 100%; }
+.bb-section-picker .df-progress { flex-wrap: wrap; }
+.bb-section-picker progress { flex: 1; }
+.bb-form-flow h3:focus { outline: none; }
+.bb-overview summary { cursor: pointer; font-size: 14px; font-weight: 500; }
+.bb-overview .statistics-cards { margin-top: 20px; }
+.bb-review h4 { font-weight: 600; margin-bottom: 16px; }
+.bb-review dl > div { display: flex; justify-content: space-between; gap: 20px; padding: 10px 0; border-bottom: 1px solid var(--df-border); font-size: 14px; }
+.bb-review dl > div:last-child { border: 0; }
+.bb-review dd { text-align: right; font-variant-numeric: tabular-nums; }
+.bb-review dl > .bb-review-text { display: grid; gap: 6px; }
+.bb-review-text dd { text-align: left; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-secondary); }
+:root.dark .borang-b-forms { --df-purple: #c4b5fd; }
+:root.dark .borang-b-forms .df-error { color: #fca5a5; }
+:root.dark .borang-b-forms .df-primary, :root.dark .borang-b-forms .df-section-heading { color: #211335; }
 .df-card { background: var(--df-paper); border: 1px solid var(--df-border); border-radius: 9px; padding: 24px; min-width: 0; }
 .df-title { border-top: 10px solid var(--df-purple); }
 .df-title h2, .df-form-title-input { font-size: clamp(24px, 3vw, 32px); line-height: 1.3; font-weight: 500; margin: 12px 0; overflow-wrap: anywhere; }

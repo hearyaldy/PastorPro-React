@@ -1,14 +1,14 @@
+import { BorangBFormView } from '../components/BorangBFormView';
 import { useHierarchyLabels } from '../hooks/useHierarchyLabels';
 import type { MissionReportContext } from '../components/MissionReportingDashboard';
 import { useEffect, useRef, useState } from 'react';
 import { collection, getDocsFromServer, onSnapshot, query, where } from 'firebase/firestore';
-import { Check, Eye, Save, Send } from 'lucide-react';
+import { Eye, Save } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { useMission } from '../contexts/MissionContext';
 import { auth, db, OperationType, reportListenerError } from '../lib/firebase';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { MONTHS, formatCurrencyRM } from '../lib/exportUtils';
-import { BORANG_B_SECTIONS, BORANG_B_TEXT_FIELDS, borangBForm, emptyBorangB, readBorangB, reportsForPeriod, type BorangBForm } from '../lib/borangB';
+import { borangBForm, emptyBorangB, readBorangB, reportsForPeriod, type BorangBForm } from '../lib/borangB';
 import { ReportConflictError, saveBorangB } from '../lib/borangBStorage';
 import { borangBDocument } from '../lib/reportDocuments';
 import type { PrintableReport } from '../lib/pdfReport';
@@ -20,7 +20,6 @@ import type { BorangBReport } from '../types';
 export function BorangBPage({ initialContext }: { initialContext?: MissionReportContext }) {
   const labels = useHierarchyLabels();
   const { profile } = useAuth();
-  const { missions } = useMission();
   const { notify } = useToast();
   const now = new Date();
   const [year, setYear] = useState(initialContext?.year || now.getFullYear());
@@ -149,7 +148,8 @@ export function BorangBPage({ initialContext }: { initialContext?: MissionReport
   const missionName = labels.mission(profile?.missionId, profile?.missionName);
   const years = Array.from(new Set([now.getFullYear() - 1, now.getFullYear(), now.getFullYear() + 1, ...history.map(item => item.year)])).sort((a, b) => b - a);
 
-  return <div className="space-y-6">
+  return <div className="department-forms borang-b-forms"><div className="df-form-column">
+    <header className="df-card df-title"><p className="df-eyebrow">Monthly reporting</p><h2>Borang B Monthly Report</h2><p>Record your monthly ministry statistics, then review your answers before submitting.</p><p className="df-context">{missionName || 'Mission'} · {profile?.displayName} · {labels.district(profile?.districtId, profile?.districtName)}</p>
     <div className="flex flex-wrap items-center justify-between gap-3 no-print">
       <div className="flex flex-wrap items-center gap-3">
         <select aria-label="Report month" disabled={saving} value={month} onChange={event => void changePeriod(year, Number(event.target.value))} className="rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-2 text-sm">
@@ -158,40 +158,23 @@ export function BorangBPage({ initialContext }: { initialContext?: MissionReport
         <select aria-label="Report year" disabled={saving} value={year} onChange={event => void changePeriod(Number(event.target.value), month)} className="rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-2 text-sm">
           {years.map(value => <option key={value}>{value}</option>)}
         </select>
-        <span aria-live="polite" className="text-xs text-[var(--text-secondary)]">{status.toUpperCase()} · {saving ? 'Saving…' : dirty ? 'Unsaved changes' : ready ? 'Up to date' : 'Loading…'}</span>
+        <span role="status" aria-live="polite" className="text-xs text-[var(--text-secondary)]">{status.toUpperCase()} · {error ? 'Save needs attention' : saving ? 'Saving…' : dirty ? 'Unsaved changes' : ready ? 'Up to date' : 'Loading…'}</span>
       </div>
       <div className="flex flex-wrap gap-2 text-xs">
         <button disabled={!ready || saving} onClick={() => { const document = borangBDocument(labels.withNames(buildCurrent()), missionName); if (dirty) document.metadata?.push(['Save status', 'Unsaved changes']); setPreview(document); }} className="inline-flex items-center gap-2 border border-[var(--border-hairline)] rounded-lg px-3 py-2 disabled:opacity-50"><Eye size={15} />Preview / Print</button>
         <button disabled={!ready || saving || conflict} onClick={() => void persist(status, true)} className="inline-flex items-center gap-2 border border-[var(--border-hairline)] rounded-lg px-3 py-2 disabled:opacity-50"><Save size={15} />Save Draft / Changes</button>
-        <button disabled={!ready || saving || conflict} onClick={() => void persist('submitted', true)} className="inline-flex items-center gap-2 bg-[var(--accent-primary)] text-white rounded-lg px-3 py-2 disabled:opacity-50"><Send size={15} />{status === 'submitted' ? 'Update Submission' : 'Submit Report'}</button>
       </div>
     </div>
+    </header>
     {error && <div role="alert" className="p-4 rounded-xl border border-amber-300 bg-amber-50 text-amber-950 text-sm">{error}{conflict && <button onClick={() => void reload()} className="ml-3 underline font-semibold">Reload Report</button>}</div>}
     {ambiguous && <div role="alert" className="p-4 rounded-xl border border-amber-300 text-sm">There are {matching.length} reports for this month. Choose an existing record in the history below. A new duplicate will not be created.</div>}
-    <StatisticsCards items={[
+    <details className="df-card bb-overview"><summary>Report overview · {MONTHS[month - 1]} {year}</summary><StatisticsCards items={[
       { label: 'Members at End', value: form.membersEnd, icon: 'people', color: 'blue' },
       { label: 'Baptisms', value: form.baptisms, icon: 'people', color: 'teal' },
       { label: 'Total Visitations', value: form.homeVisitations + form.hospitalVisitations + form.prisonVisitations, icon: 'distance', color: 'green' },
       { label: 'Tithes & Offerings', value: formatCurrencyRM(form.tithe + form.offerings), icon: 'money', color: 'purple' },
-    ]} />
-    <div className="text-sm text-[var(--text-secondary)]">{missionName || 'Mission'} · {profile?.displayName} · {labels.district(profile?.districtId, profile?.districtName)}</div>
-    <fieldset disabled={!ready || saving || conflict} className="grid gap-5 lg:grid-cols-2 disabled:opacity-60">
-      {BORANG_B_SECTIONS.map(section => <section key={section.title} className="border border-[var(--border-hairline)] rounded-2xl bg-[var(--bg-surface)] overflow-hidden shadow-sm">
-        <h3 className="px-5 py-4 text-sm font-semibold bg-[var(--bg-subtle)] border-b border-[var(--border-hairline)]">{section.title}</h3>
-        <div className="divide-y divide-[var(--border-hairline)]">
-          {section.fields.map(([field, label]) => <label key={field} className="flex items-center justify-between gap-4 px-5 py-3 text-sm">
-            <span className={field === 'membersEnd' ? 'font-semibold' : ''}>{label}</span>
-            <input aria-label={label} type="number" min={0} step={field === 'tithe' || field === 'offerings' ? '0.01' : '1'} value={form[field]}
-              onChange={event => update(field, Math.max(0, Number(event.target.value) || 0))}
-              className="w-28 border border-[var(--border-hairline)] bg-[var(--bg-canvas)] rounded-lg px-3 py-2 text-right font-mono-tabular" />
-          </label>)}
-        </div>
-      </section>)}
-      <section className="border border-[var(--border-hairline)] rounded-2xl bg-[var(--bg-surface)] p-5 space-y-4">
-        <h3 className="text-sm font-semibold">Additional Information</h3>
-        {BORANG_B_TEXT_FIELDS.map(([field, label]) => <label key={field} className="block text-sm">{label}<textarea rows={3} maxLength={10000} value={form[field]} onChange={event => update(field, event.target.value)} className="mt-2 w-full border border-[var(--border-hairline)] bg-[var(--bg-canvas)] rounded-lg p-3" /></label>)}
-      </section>
-    </fieldset>
+    ]} /></details>
+    <BorangBFormView key={key} value={form} onChange={update} disabled={!ready || saving || conflict} saving={saving} status={status} errorMessage={error} onReload={conflict ? () => void reload() : undefined} onSave={() => void persist(status, true)} onSubmit={() => void persist('submitted', true)} />
     <section className="border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] overflow-hidden">
       <h3 className="px-5 py-4 border-b border-[var(--border-hairline)] text-sm font-semibold">Your Borang B History</h3>
       <div className="overflow-x-auto"><table className="w-full text-sm text-left"><thead><tr className="text-xs text-[var(--text-muted)]">{['Period', 'Status', 'Members', 'Bible Studies', 'Baptisms', ''].map(label => <th key={label} className="p-3">{label}</th>)}</tr></thead>
@@ -200,5 +183,5 @@ export function BorangBPage({ initialContext }: { initialContext?: MissionReport
       {!history.length && <p className="p-5 text-sm text-[var(--text-muted)]">No saved reports yet. Enter this month's statistics and save a draft.</p>}
     </section>
     {preview && <ReportPreview report={preview} onClose={() => setPreview(null)} />}
-  </div>;
+  </div></div>;
 }
