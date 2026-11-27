@@ -3,6 +3,8 @@ import { test } from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { chromium } from 'playwright-core';
 test('landing page is responsive, links to the deployed WebApp, and handles an unconfigured URL', async () => {
+  const html = await readFile('landing/index.html', 'utf8');
+  assert.equal((html.match(/class="[^"]*webapp-link" href="https:\/\/pastor-report-e4c52\.web\.app\/"/g) || []).length, 3);
   const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true });
   try {
     const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } });
@@ -35,13 +37,13 @@ test('landing page is responsive, links to the deployed WebApp, and handles an u
     });
     await page.goto('https://landing.example/');
     assert.equal(await page.getByRole('link', { name: 'WebApp', exact: false }).first().getAttribute('href'), 'https://pastor-report-e4c52.web.app/');
-    await page.route('https://landing.example/config.js', route => route.fulfill({ contentType: 'application/javascript', body: "window.PASTORPRO_WEBAPP_URL='';" }));
+    await page.route('https://landing.example/config.js*', route => route.fulfill({ contentType: 'application/javascript', body: "window.PASTORPRO_WEBAPP_URL='';" }));
     await page.reload();
     await page.getByRole('link', { name: 'WebApp', exact: false }).first().click();
     await page.getByRole('dialog').waitFor();
     assert.ok(await page.getByRole('heading', { name: 'The WebApp link is being prepared.' }).isVisible());
     await page.keyboard.press('Escape'); assert.equal(await page.getByRole('dialog').count(), 0);
-    await page.route('https://landing.example/config.js', route => route.fulfill({ contentType: 'application/javascript', body: "window.PASTORPRO_WEBAPP_URL='https://workspace.example/';" }));
+    await page.route('https://landing.example/config.js*', route => route.fulfill({ contentType: 'application/javascript', body: "window.PASTORPRO_WEBAPP_URL='https://workspace.example/';" }));
     await page.reload();
     await page.waitForFunction(() => document.querySelector('.webapp-link')?.getAttribute('href') === 'https://workspace.example/');
     assert.equal(await page.locator('.webapp-link').count(), 3);

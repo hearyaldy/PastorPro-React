@@ -520,6 +520,9 @@ Implementation, retention boundaries and exact deployment scope:
       render correctly, and no page errors occur.
 - [ ] Verify signed-in workflows with the user's account; deployment checks
       did not sign in or modify production user/report records.
+- [x] Follow-up: embed the live URL directly in all three landing anchors and
+      version the configuration/scripts to refresh cached assets. Links also
+      work with JavaScript disabled; keep configured-URL regression coverage.
 
 Source and setup: `LANDING_PAGE.md`. Local preview: `/landing/`.
 

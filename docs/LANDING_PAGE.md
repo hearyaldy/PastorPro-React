@@ -14,6 +14,9 @@ and closing call to action.
 The React WebApp is deployed to https://pastor-report-e4c52.web.app/ .
 `landing/config.js` connects all three WebApp buttons to this URL, including
 when previewing the landing page locally.
+All three anchors also contain the live URL directly, so the WebApp link works
+without JavaScript. Configuration/script URLs are versioned to refresh older
+browser caches after the initial unconfigured landing release.
 
 - If the configured URL is removed, localhost falls back to the local app;
   published hosts display the link-not-configured dialog.
