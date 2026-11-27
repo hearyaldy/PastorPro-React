@@ -1,0 +1,6 @@
+{
+  "name": "Pastor Report — Sabah Adventist Mission",
+  "description": "Editorial church management and ministerial reporting workspace for the Sabah Adventist Mission covering pastoral activities, Borang B monthly reports, financial & FAM ledgers, quarterly department reports, and mission administration.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

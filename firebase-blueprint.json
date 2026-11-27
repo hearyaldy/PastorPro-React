@@ -1,0 +1,486 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Authenticated platform user with role, capability level, and hierarchical mission/region/district/church assignment.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "email": { "type": "string", "format": "email", "maxLength": 200 },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "photoURL": { "type": "string", "maxLength": 500 },
+        "phone": { "type": "string", "maxLength": 40 },
+        "userRole": {
+          "type": "string",
+          "enum": [
+            "super_admin",
+            "admin",
+            "mission_admin",
+            "ministerial_secretary",
+            "director",
+            "officer",
+            "editor",
+            "district_pastor",
+            "church_treasurer",
+            "user"
+          ]
+        },
+        "role": { "type": "string", "maxLength": 64 },
+        "roleTitle": { "type": "string", "maxLength": 80 },
+        "isAdmin": { "type": "boolean" },
+        "level": { "type": "integer" },
+        "missionId": { "type": "string", "maxLength": 128 },
+        "missionName": { "type": "string", "maxLength": 120 },
+        "regionId": { "type": "string", "maxLength": 128 },
+        "regionName": { "type": "string", "maxLength": 120 },
+        "districtId": { "type": "string", "maxLength": 128 },
+        "districtName": { "type": "string", "maxLength": 120 },
+        "churchId": { "type": "string", "maxLength": 128 },
+        "churchName": { "type": "string", "maxLength": 120 },
+        "isPremium": { "type": "boolean" },
+        "isActive": { "type": "boolean" },
+        "onboardingCompleted": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "displayName", "userRole", "level", "isActive", "onboardingCompleted", "createdAt", "updatedAt"]
+    },
+    "Mission": {
+      "title": "Mission",
+      "description": "Top-level Adventist Mission entity (e.g., Sabah Adventist Mission).",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "code": { "type": "string", "minLength": 1, "maxLength": 24 },
+        "country": { "type": "string", "maxLength": 80 },
+        "headquarters": { "type": "string", "maxLength": 200 },
+        "isActive": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "code", "isActive", "createdAt", "updatedAt"]
+    },
+    "MissionDepartment": {
+      "title": "MissionDepartment",
+      "description": "Department scoped under a specific mission.",
+      "type": "object",
+      "properties": {
+        "missionId": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "directorName": { "type": "string", "maxLength": 120 },
+        "resourceUrl": { "type": "string", "maxLength": 500 },
+        "isActive": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["missionId", "name", "isActive", "createdAt", "updatedAt"]
+    },
+    "MissionReportSummary": {
+      "title": "MissionReportSummary",
+      "description": "Aggregated mission-level report snapshot.",
+      "type": "object",
+      "properties": {
+        "missionId": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "period": { "type": "string", "maxLength": 32 },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "notes": { "type": "string", "maxLength": 2000 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["missionId", "title", "period", "createdBy", "createdAt", "updatedAt"]
+    },
+    "Region": {
+      "title": "Region",
+      "description": "Administrative region under a mission.",
+      "type": "object",
+      "properties": {
+        "missionId": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "code": { "type": "string", "maxLength": 24 },
+        "isActive": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["missionId", "name", "isActive", "createdAt", "updatedAt"]
+    },
+    "District": {
+      "title": "District",
+      "description": "Pastoral district under a region and mission.",
+      "type": "object",
+      "properties": {
+        "missionId": { "type": "string", "maxLength": 128 },
+        "regionId": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "districtPastorId": { "type": "string", "maxLength": 128 },
+        "districtPastorName": { "type": "string", "maxLength": 120 },
+        "isActive": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["missionId", "regionId", "name", "isActive", "createdAt", "updatedAt"]
+    },
+    "Church": {
+      "title": "Church",
+      "description": "Local church belonging to a district, region, and mission.",
+      "type": "object",
+      "properties": {
+        "missionId": { "type": "string", "maxLength": 128 },
+        "regionId": { "type": "string", "maxLength": 128 },
+        "districtId": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "churchCode": { "type": "string", "maxLength": 32 },
+        "treasurerId": { "type": "string", "maxLength": 128 },
+        "treasurerName": { "type": "string", "maxLength": 120 },
+        "memberCount": { "type": "integer" },
+        "isActive": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["missionId", "regionId", "districtId", "name", "isActive", "createdAt", "updatedAt"]
+    },
+    "Staff": {
+      "title": "Staff",
+      "description": "Mission staff directory entry assignable to districts.",
+      "type": "object",
+      "properties": {
+        "missionId": { "type": "string", "maxLength": 128 },
+        "regionId": { "type": "string", "maxLength": 128 },
+        "districtId": { "type": "string", "maxLength": 128 },
+        "fullName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "position": { "type": "string", "maxLength": 80 },
+        "email": { "type": "string", "maxLength": 200 },
+        "phone": { "type": "string", "maxLength": 40 },
+        "status": { "type": "string", "enum": ["active", "inactive", "transferred"] },
+        "isActive": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["missionId", "fullName", "position", "status", "isActive", "createdAt", "updatedAt"]
+    },
+    "Department": {
+      "title": "Department",
+      "description": "Church department directory entry with resource links.",
+      "type": "object",
+      "properties": {
+        "missionId": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "code": { "type": "string", "maxLength": 32 },
+        "description": { "type": "string", "maxLength": 600 },
+        "directorName": { "type": "string", "maxLength": 120 },
+        "resourceUrl": { "type": "string", "maxLength": 500 },
+        "secondaryUrl": { "type": "string", "maxLength": 500 },
+        "isActive": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["missionId", "name", "isActive", "createdAt", "updatedAt"]
+    },
+    "FinancialReport": {
+      "title": "FinancialReport",
+      "description": "Monthly church tithe and offering report with edit history.",
+      "type": "object",
+      "properties": {
+        "missionId": { "type": "string", "maxLength": 128 },
+        "regionId": { "type": "string", "maxLength": 128 },
+        "districtId": { "type": "string", "maxLength": 128 },
+        "churchId": { "type": "string", "maxLength": 128 },
+        "churchName": { "type": "string", "maxLength": 160 },
+        "submittedBy": { "type": "string", "maxLength": 128 },
+        "submittedByName": { "type": "string", "maxLength": 120 },
+        "year": { "type": "integer" },
+        "month": { "type": "integer" },
+        "tithe": { "type": "number" },
+        "combinedBudget": { "type": "number" },
+        "missionOffering": { "type": "number" },
+        "localChurchOffering": { "type": "number" },
+        "specialOffering": { "type": "number" },
+        "totalIncome": { "type": "number" },
+        "totalExpense": { "type": "number" },
+        "status": { "type": "string", "enum": ["draft", "submitted", "verified"] },
+        "notes": { "type": "string", "maxLength": 2000 },
+        "famId": { "type": "string", "maxLength": 128 },
+        "history": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "missionId", "regionId", "districtId", "churchId", "churchName",
+        "submittedBy", "year", "month", "tithe", "combinedBudget",
+        "missionOffering", "localChurchOffering", "specialOffering",
+        "totalIncome", "totalExpense", "status", "createdAt", "updatedAt"
+      ]
+    },
+    "FamData": {
+      "title": "FamData",
+      "description": "Financial Accounting Method (FAM) fund-by-fund income and expense breakdown linked 1:1 to a financial report.",
+      "type": "object",
+      "properties": {
+        "reportId": { "type": "string", "maxLength": 128 },
+        "missionId": { "type": "string", "maxLength": 128 },
+        "districtId": { "type": "string", "maxLength": 128 },
+        "churchId": { "type": "string", "maxLength": 128 },
+        "submittedBy": { "type": "string", "maxLength": 128 },
+        "year": { "type": "integer" },
+        "month": { "type": "integer" },
+        "openingBalance": { "type": "number" },
+        "closingBalance": { "type": "number" },
+        "funds": { "type": "array" },
+        "expenses": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["reportId", "missionId", "districtId", "churchId", "submittedBy", "year", "month", "openingBalance", "closingBalance", "funds", "expenses", "createdAt", "updatedAt"]
+    },
+    "QuarterlyDepartmentReport": {
+      "title": "QuarterlyDepartmentReport",
+      "description": "Quarterly department submission for Kanak-Kanak, Penatalayanan, SSPM, or Wanita with deterministic ID {churchId}_{year}_Q{quarter}_{department}.",
+      "type": "object",
+      "properties": {
+        "missionId": { "type": "string", "maxLength": 128 },
+        "regionId": { "type": "string", "maxLength": 128 },
+        "districtId": { "type": "string", "maxLength": 128 },
+        "churchId": { "type": "string", "maxLength": 128 },
+        "churchName": { "type": "string", "maxLength": 160 },
+        "districtName": { "type": "string", "maxLength": 120 },
+        "department": { "type": "string", "enum": ["kanak_kanak", "penatalayanan", "sspm", "wanita"] },
+        "year": { "type": "integer" },
+        "quarter": { "type": "integer" },
+        "submittedBy": { "type": "string", "maxLength": 128 },
+        "submittedByName": { "type": "string", "maxLength": 120 },
+        "status": { "type": "string", "enum": ["draft", "submitted"] },
+        "payload": { "type": "object" },
+        "notes": { "type": "string", "maxLength": 2000 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["missionId", "regionId", "districtId", "churchId", "churchName", "department", "year", "quarter", "submittedBy", "status", "payload", "createdAt", "updatedAt"]
+    },
+    "BorangBReport": {
+      "title": "BorangBReport",
+      "description": "Monthly ministerial pastoral report (Borang B) with auto-save draft/submitted state.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "maxLength": 128 },
+        "pastorName": { "type": "string", "maxLength": 120 },
+        "missionId": { "type": "string", "maxLength": 128 },
+        "regionId": { "type": "string", "maxLength": 128 },
+        "districtId": { "type": "string", "maxLength": 128 },
+        "districtName": { "type": "string", "maxLength": 120 },
+        "year": { "type": "integer" },
+        "month": { "type": "integer" },
+        "status": { "type": "string", "enum": ["draft", "submitted"] },
+        "sermonsPreached": { "type": "integer" },
+        "bibleStudiesGiven": { "type": "integer" },
+        "homeVisitations": { "type": "integer" },
+        "hospitalVisitations": { "type": "integer" },
+        "counselingSessions": { "type": "integer" },
+        "evangelisticMeetings": { "type": "integer" },
+        "baptisms": { "type": "integer" },
+        "professionsOfFaith": { "type": "integer" },
+        "boardMeetings": { "type": "integer" },
+        "communionServices": { "type": "integer" },
+        "anointings": { "type": "integer" },
+        "weddings": { "type": "integer" },
+        "funerals": { "type": "integer" },
+        "childDedications": { "type": "integer" },
+        "titheFaithfulnessNotes": { "type": "string", "maxLength": 1500 },
+        "challengesAndPrayer": { "type": "string", "maxLength": 2000 },
+        "nextMonthGoals": { "type": "string", "maxLength": 2000 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "userId", "pastorName", "missionId", "districtId", "year", "month", "status",
+        "sermonsPreached", "bibleStudiesGiven", "homeVisitations", "hospitalVisitations",
+        "counselingSessions", "evangelisticMeetings", "baptisms", "professionsOfFaith",
+        "boardMeetings", "communionServices", "createdAt", "updatedAt"
+      ]
+    },
+    "Activity": {
+      "title": "Activity",
+      "description": "Pastoral activity log entry.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "maxLength": 128 },
+        "missionId": { "type": "string", "maxLength": 128 },
+        "districtId": { "type": "string", "maxLength": 128 },
+        "churchId": { "type": "string", "maxLength": 128 },
+        "churchName": { "type": "string", "maxLength": 160 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "category": { "type": "string", "enum": ["visitation", "evangelism", "meeting", "worship", "counseling", "training", "administration"] },
+        "date": { "type": "string", "maxLength": 32 },
+        "durationMinutes": { "type": "integer" },
+        "participants": { "type": "integer" },
+        "location": { "type": "string", "maxLength": 160 },
+        "notes": { "type": "string", "maxLength": 2000 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "missionId", "title", "category", "date", "durationMinutes", "createdAt", "updatedAt"]
+    },
+    "Appointment": {
+      "title": "Appointment",
+      "description": "Pastoral appointment with contact details.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "contactName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "contactPhone": { "type": "string", "maxLength": 40 },
+        "location": { "type": "string", "maxLength": 160 },
+        "dateTime": { "type": "string", "maxLength": 40 },
+        "status": { "type": "string", "enum": ["scheduled", "completed", "cancelled"] },
+        "notes": { "type": "string", "maxLength": 1500 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "title", "contactName", "dateTime", "status", "createdAt", "updatedAt"]
+    },
+    "Todo": {
+      "title": "Todo",
+      "description": "Personal pastoral to-do item.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "priority": { "type": "string", "enum": ["low", "medium", "high"] },
+        "dueDate": { "type": "string", "maxLength": 32 },
+        "completed": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "title", "priority", "completed", "createdAt", "updatedAt"]
+    },
+    "Event": {
+      "title": "Event",
+      "description": "User/local ministry event.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "maxLength": 128 },
+        "missionId": { "type": "string", "maxLength": 128 },
+        "districtId": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "category": { "type": "string", "maxLength": 64 },
+        "startDate": { "type": "string", "maxLength": 40 },
+        "endDate": { "type": "string", "maxLength": 40 },
+        "location": { "type": "string", "maxLength": 160 },
+        "description": { "type": "string", "maxLength": 2000 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "title", "category", "startDate", "endDate", "createdAt", "updatedAt"]
+    },
+    "GlobalEvent": {
+      "title": "GlobalEvent",
+      "description": "Mission-wide calendar event managed by administrators.",
+      "type": "object",
+      "properties": {
+        "missionId": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "category": { "type": "string", "maxLength": 64 },
+        "startDate": { "type": "string", "maxLength": 40 },
+        "endDate": { "type": "string", "maxLength": 40 },
+        "location": { "type": "string", "maxLength": 160 },
+        "description": { "type": "string", "maxLength": 2000 },
+        "isSpecialEvent": { "type": "boolean" },
+        "isActive": { "type": "boolean" },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["missionId", "title", "category", "startDate", "endDate", "isActive", "createdBy", "createdAt", "updatedAt"]
+    },
+    "Resource": {
+      "title": "Resource",
+      "description": "Shared downloadable or linked mission document/resource.",
+      "type": "object",
+      "properties": {
+        "missionId": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "category": { "type": "string", "maxLength": 64 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "url": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "fileType": { "type": "string", "maxLength": 32 },
+        "isActive": { "type": "boolean" },
+        "uploadedBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["missionId", "title", "category", "url", "isActive", "uploadedBy", "createdAt", "updatedAt"]
+    },
+    "LocationRequest": {
+      "title": "LocationRequest",
+      "description": "Onboarding request submitted when a user's church or district is missing.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "maxLength": 128 },
+        "userName": { "type": "string", "maxLength": 120 },
+        "userEmail": { "type": "string", "maxLength": 200 },
+        "missionName": { "type": "string", "maxLength": 120 },
+        "regionName": { "type": "string", "maxLength": 120 },
+        "districtName": { "type": "string", "maxLength": 120 },
+        "churchName": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "notes": { "type": "string", "maxLength": 1000 },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "reviewedBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "userName", "userEmail", "churchName", "status", "createdAt", "updatedAt"]
+    },
+    "Setting": {
+      "title": "Setting",
+      "description": "Application configuration document (e.g., emailDomains).",
+      "type": "object",
+      "properties": {
+        "key": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "allowedDomains": { "type": "array" },
+        "appVersion": { "type": "string", "maxLength": 32 },
+        "maintenanceMode": { "type": "boolean" },
+        "updatedBy": { "type": "string", "maxLength": 128 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["key", "updatedAt"]
+    },
+    "AdminActivity": {
+      "title": "AdminActivity",
+      "description": "Audit log of administrative actions across users, hierarchy, and reports.",
+      "type": "object",
+      "properties": {
+        "actorId": { "type": "string", "maxLength": 128 },
+        "actorName": { "type": "string", "maxLength": 120 },
+        "action": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "targetType": { "type": "string", "maxLength": 64 },
+        "targetId": { "type": "string", "maxLength": 128 },
+        "summary": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["actorId", "actorName", "action", "targetType", "summary", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": { "schema": { "$ref": "#/entities/User" }, "description": "User profiles, roles, and hierarchy links" },
+    "/missions/{missionId}": { "schema": { "$ref": "#/entities/Mission" }, "description": "Top-level missions" },
+    "/missions/{missionId}/departments/{departmentId}": { "schema": { "$ref": "#/entities/MissionDepartment" }, "description": "Mission subcollection departments" },
+    "/missions/{missionId}/reports/{reportId}": { "schema": { "$ref": "#/entities/MissionReportSummary" }, "description": "Mission subcollection reports" },
+    "/regions/{regionId}": { "schema": { "$ref": "#/entities/Region" }, "description": "Regions under missions" },
+    "/districts/{districtId}": { "schema": { "$ref": "#/entities/District" }, "description": "Districts under regions" },
+    "/churches/{churchId}": { "schema": { "$ref": "#/entities/Church" }, "description": "Churches under districts" },
+    "/staff/{staffId}": { "schema": { "$ref": "#/entities/Staff" }, "description": "Mission staff directory" },
+    "/departments/{departmentId}": { "schema": { "$ref": "#/entities/Department" }, "description": "Church departments and URLs" },
+    "/financial_reports/{reportId}": { "schema": { "$ref": "#/entities/FinancialReport" }, "description": "Monthly church financial reports" },
+    "/fam_data/{famId}": { "schema": { "$ref": "#/entities/FamData" }, "description": "1:1 FAM breakdown linked to financial reports" },
+    "/quarterly_department_report/{reportId}": { "schema": { "$ref": "#/entities/QuarterlyDepartmentReport" }, "description": "Quarterly Kanak-Kanak, Penatalayanan, SSPM, and Wanita reports" },
+    "/borang_b_reports/{reportId}": { "schema": { "$ref": "#/entities/BorangBReport" }, "description": "Monthly ministerial pastoral reports (Borang B)" },
+    "/activities/{activityId}": { "schema": { "$ref": "#/entities/Activity" }, "description": "Pastoral activity log entries" },
+    "/appointments/{appointmentId}": { "schema": { "$ref": "#/entities/Appointment" }, "description": "Pastoral appointment records" },
+    "/todos/{todoId}": { "schema": { "$ref": "#/entities/Todo" }, "description": "Personal pastoral to-do items" },
+    "/events/{eventId}": { "schema": { "$ref": "#/entities/Event" }, "description": "Local/user calendar events" },
+    "/global_events/{eventId}": { "schema": { "$ref": "#/entities/GlobalEvent" }, "description": "Mission-wide global events" },
+    "/resources/{resourceId}": { "schema": { "$ref": "#/entities/Resource" }, "description": "Shared downloadable mission resources" },
+    "/locationRequests/{requestId}": { "schema": { "$ref": "#/entities/LocationRequest" }, "description": "Missing church/district onboarding requests" },
+    "/settings/{settingId}": { "schema": { "$ref": "#/entities/Setting" }, "description": "Application settings (e.g. emailDomains)" },
+    "/admin_activity/{activityId}": { "schema": { "$ref": "#/entities/AdminActivity" }, "description": "Audit log of administrative actions" }
+  }
+}

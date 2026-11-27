@@ -1,0 +1,953 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Pillar 4.1: Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // -------------------------------------------------------------------------
+    // Primitive Helpers (Pillar 3)
+    // -------------------------------------------------------------------------
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isBootstrappedSuperAdmin() {
+      return isVerified() && request.auth.token.email == 'haw33inc@gmail.com';
+    }
+
+    function userDocExists() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function callerDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isSuperAdmin() {
+      return isBootstrappedSuperAdmin() || (
+        isVerified() && userDocExists() && (
+          callerDoc().userRole == 'super_admin' ||
+          callerDoc().get('role', '') == 'super_admin'
+        )
+      );
+    }
+
+    function isAdmin() {
+      return isSuperAdmin() || (
+        isVerified() && userDocExists() && (
+          callerDoc().userRole == 'admin' ||
+          callerDoc().get('role', '') == 'admin' ||
+          callerDoc().get('isAdmin', false) == true
+        )
+      );
+    }
+
+    function isMissionAdmin() {
+      return isAdmin() || (
+        isVerified() && userDocExists() && (
+          callerDoc().userRole == 'mission_admin' ||
+          callerDoc().get('role', '') == 'mission_admin'
+        )
+      );
+    }
+
+    function isMissionAdminFor(missionId) {
+      return isAdmin() || (
+        isVerified() && userDocExists() &&
+        callerDoc().userRole == 'mission_admin' &&
+        callerDoc().get('missionId', '') == missionId
+      );
+    }
+
+    function isMissionLeadership() {
+      return isMissionAdmin() || (
+        isVerified() && userDocExists() &&
+        callerDoc().userRole in ['ministerial_secretary', 'director', 'officer']
+      );
+    }
+
+    function isDistrictPastorFor(districtId) {
+      return isVerified() && userDocExists() && (
+        callerDoc().userRole == 'district_pastor' &&
+        callerDoc().get('districtId', '') == districtId
+      ) || (
+        isVerified() &&
+        exists(/databases/$(database)/documents/districts/$(districtId)) &&
+        get(/databases/$(database)/documents/districts/$(districtId)).data.get('districtPastorId', '') == request.auth.uid
+      );
+    }
+
+    function isChurchTreasurerFor(churchId) {
+      return isVerified() && userDocExists() && (
+        callerDoc().userRole == 'church_treasurer' &&
+        callerDoc().get('churchId', '') == churchId
+      ) || (
+        isVerified() &&
+        exists(/databases/$(database)/documents/churches/$(churchId)) &&
+        get(/databases/$(database)/documents/churches/$(churchId)).data.get('treasurerId', '') == request.auth.uid
+      );
+    }
+
+    function isEditorInMission(missionId) {
+      return isMissionAdminFor(missionId) || (
+        isVerified() && userDocExists() &&
+        callerDoc().userRole == 'editor' &&
+        callerDoc().get('missionId', '') == missionId
+      );
+    }
+
+    function validOptStr(data, key, maxLen) {
+      return !(key in data) || (data[key] is string && data[key].size() <= maxLen);
+    }
+
+    function validOptBool(data, key) {
+      return !(key in data) || (data[key] is bool);
+    }
+
+    function validOptInt(data, key, minVal, maxVal) {
+      return !(key in data) || (data[key] is int && data[key] >= minVal && data[key] <= maxVal);
+    }
+
+    // -------------------------------------------------------------------------
+    // Entity Validation Blueprints (Pillar 2)
+    // -------------------------------------------------------------------------
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'displayName', 'userRole', 'level', 'isActive', 'onboardingCompleted', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly([
+          'uid', 'email', 'displayName', 'photoURL', 'phone', 'userRole', 'role', 'roleTitle',
+          'isAdmin', 'level', 'missionId', 'missionName', 'regionId', 'regionName',
+          'districtId', 'districtName', 'churchId', 'churchName', 'isPremium',
+          'isActive', 'onboardingCompleted', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.uid) &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 200 &&
+        data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120 &&
+        validOptStr(data, 'photoURL', 500) &&
+        validOptStr(data, 'phone', 40) &&
+        data.userRole in ['super_admin', 'admin', 'mission_admin', 'ministerial_secretary', 'director', 'officer', 'editor', 'district_pastor', 'church_treasurer', 'user'] &&
+        validOptStr(data, 'role', 64) &&
+        validOptStr(data, 'roleTitle', 80) &&
+        validOptBool(data, 'isAdmin') &&
+        data.level is int && data.level >= 1 && data.level <= 5 &&
+        validOptStr(data, 'missionId', 128) &&
+        validOptStr(data, 'missionName', 120) &&
+        validOptStr(data, 'regionId', 128) &&
+        validOptStr(data, 'regionName', 120) &&
+        validOptStr(data, 'districtId', 128) &&
+        validOptStr(data, 'districtName', 120) &&
+        validOptStr(data, 'churchId', 128) &&
+        validOptStr(data, 'churchName', 120) &&
+        validOptBool(data, 'isPremium') &&
+        data.isActive is bool &&
+        data.onboardingCompleted is bool &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidMission(data) {
+      return data.keys().hasAll(['name', 'code', 'isActive', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['name', 'code', 'country', 'headquarters', 'isActive', 'createdAt', 'updatedAt']) &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+        data.code is string && data.code.size() >= 1 && data.code.size() <= 24 &&
+        validOptStr(data, 'country', 80) &&
+        validOptStr(data, 'headquarters', 200) &&
+        data.isActive is bool &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidMissionReportSummary(data) {
+      return data.keys().hasAll(['missionId', 'title', 'period', 'createdBy', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['missionId', 'title', 'period', 'createdBy', 'notes', 'createdAt', 'updatedAt']) &&
+        isValidId(data.missionId) &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 160 &&
+        data.period is string && data.period.size() >= 1 && data.period.size() <= 32 &&
+        isValidId(data.createdBy) &&
+        validOptStr(data, 'notes', 2000) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidRegion(data) {
+      return data.keys().hasAll(['missionId', 'name', 'isActive', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['missionId', 'name', 'code', 'isActive', 'createdAt', 'updatedAt']) &&
+        isValidId(data.missionId) &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+        validOptStr(data, 'code', 24) &&
+        data.isActive is bool &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidDistrict(data) {
+      return data.keys().hasAll(['missionId', 'regionId', 'name', 'isActive', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['missionId', 'regionId', 'name', 'districtPastorId', 'districtPastorName', 'isActive', 'createdAt', 'updatedAt']) &&
+        isValidId(data.missionId) &&
+        isValidId(data.regionId) &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+        validOptStr(data, 'districtPastorId', 128) &&
+        validOptStr(data, 'districtPastorName', 120) &&
+        data.isActive is bool &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidChurch(data) {
+      return data.keys().hasAll(['missionId', 'regionId', 'districtId', 'name', 'isActive', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['missionId', 'regionId', 'districtId', 'name', 'churchCode', 'treasurerId', 'treasurerName', 'memberCount', 'isActive', 'createdAt', 'updatedAt']) &&
+        isValidId(data.missionId) &&
+        isValidId(data.regionId) &&
+        isValidId(data.districtId) &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 160 &&
+        validOptStr(data, 'churchCode', 32) &&
+        validOptStr(data, 'treasurerId', 128) &&
+        validOptStr(data, 'treasurerName', 120) &&
+        validOptInt(data, 'memberCount', 0, 100000) &&
+        data.isActive is bool &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidStaff(data) {
+      return data.keys().hasAll(['missionId', 'fullName', 'position', 'status', 'isActive', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['missionId', 'regionId', 'districtId', 'fullName', 'position', 'email', 'phone', 'status', 'isActive', 'createdAt', 'updatedAt']) &&
+        isValidId(data.missionId) &&
+        validOptStr(data, 'regionId', 128) &&
+        validOptStr(data, 'districtId', 128) &&
+        data.fullName is string && data.fullName.size() >= 1 && data.fullName.size() <= 120 &&
+        data.position is string && data.position.size() >= 1 && data.position.size() <= 80 &&
+        validOptStr(data, 'email', 200) &&
+        validOptStr(data, 'phone', 40) &&
+        data.status in ['active', 'inactive', 'transferred'] &&
+        data.isActive is bool &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidDepartment(data) {
+      return data.keys().hasAll(['missionId', 'name', 'isActive', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['missionId', 'name', 'code', 'description', 'directorName', 'resourceUrl', 'secondaryUrl', 'isActive', 'createdAt', 'updatedAt']) &&
+        isValidId(data.missionId) &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+        validOptStr(data, 'code', 32) &&
+        validOptStr(data, 'description', 600) &&
+        validOptStr(data, 'directorName', 120) &&
+        validOptStr(data, 'resourceUrl', 500) &&
+        validOptStr(data, 'secondaryUrl', 500) &&
+        data.isActive is bool &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidFinancialReport(data) {
+      return data.keys().hasAll([
+          'missionId', 'regionId', 'districtId', 'churchId', 'churchName',
+          'submittedBy', 'year', 'month', 'tithe', 'combinedBudget',
+          'missionOffering', 'localChurchOffering', 'specialOffering',
+          'totalIncome', 'totalExpense', 'status', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'missionId', 'regionId', 'districtId', 'churchId', 'churchName',
+          'submittedBy', 'submittedByName', 'year', 'month', 'tithe', 'combinedBudget',
+          'missionOffering', 'localChurchOffering', 'specialOffering',
+          'totalIncome', 'totalExpense', 'status', 'notes', 'famId', 'history',
+          'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.missionId) &&
+        isValidId(data.regionId) &&
+        isValidId(data.districtId) &&
+        isValidId(data.churchId) &&
+        data.churchName is string && data.churchName.size() >= 1 && data.churchName.size() <= 160 &&
+        isValidId(data.submittedBy) &&
+        validOptStr(data, 'submittedByName', 120) &&
+        data.year is int && data.year >= 2000 && data.year <= 2100 &&
+        data.month is int && data.month >= 1 && data.month <= 12 &&
+        data.tithe is number && data.tithe >= 0 &&
+        data.combinedBudget is number && data.combinedBudget >= 0 &&
+        data.missionOffering is number && data.missionOffering >= 0 &&
+        data.localChurchOffering is number && data.localChurchOffering >= 0 &&
+        data.specialOffering is number && data.specialOffering >= 0 &&
+        data.totalIncome is number && data.totalIncome >= 0 &&
+        data.totalExpense is number && data.totalExpense >= 0 &&
+        data.status in ['draft', 'submitted', 'verified'] &&
+        validOptStr(data, 'notes', 2000) &&
+        validOptStr(data, 'famId', 128) &&
+        (!('history' in data) || (data.history is list && data.history.size() <= 100 && (data.history.size() == 0 || data.history[0] is map))) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidFamData(data) {
+      return data.keys().hasAll(['reportId', 'missionId', 'districtId', 'churchId', 'submittedBy', 'year', 'month', 'openingBalance', 'closingBalance', 'funds', 'expenses', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['reportId', 'missionId', 'districtId', 'churchId', 'submittedBy', 'year', 'month', 'openingBalance', 'closingBalance', 'funds', 'expenses', 'createdAt', 'updatedAt']) &&
+        isValidId(data.reportId) &&
+        isValidId(data.missionId) &&
+        isValidId(data.districtId) &&
+        isValidId(data.churchId) &&
+        isValidId(data.submittedBy) &&
+        data.year is int && data.year >= 2000 && data.year <= 2100 &&
+        data.month is int && data.month >= 1 && data.month <= 12 &&
+        data.openingBalance is number &&
+        data.closingBalance is number &&
+        data.funds is list && data.funds.size() <= 50 && (data.funds.size() == 0 || data.funds[0] is map) &&
+        data.expenses is list && data.expenses.size() <= 50 && (data.expenses.size() == 0 || data.expenses[0] is map) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidQuarterlyReport(data) {
+      return data.keys().hasAll(['missionId', 'regionId', 'districtId', 'churchId', 'churchName', 'department', 'year', 'quarter', 'submittedBy', 'status', 'payload', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['missionId', 'regionId', 'districtId', 'churchId', 'churchName', 'districtName', 'department', 'year', 'quarter', 'submittedBy', 'submittedByName', 'status', 'payload', 'notes', 'createdAt', 'updatedAt']) &&
+        isValidId(data.missionId) &&
+        isValidId(data.regionId) &&
+        isValidId(data.districtId) &&
+        isValidId(data.churchId) &&
+        data.churchName is string && data.churchName.size() >= 1 && data.churchName.size() <= 160 &&
+        validOptStr(data, 'districtName', 120) &&
+        data.department in ['kanak_kanak', 'penatalayanan', 'sspm', 'wanita'] &&
+        data.year is int && data.year >= 2000 && data.year <= 2100 &&
+        data.quarter is int && data.quarter >= 1 && data.quarter <= 4 &&
+        isValidId(data.submittedBy) &&
+        validOptStr(data, 'submittedByName', 120) &&
+        data.status in ['draft', 'submitted'] &&
+        data.payload is map && data.payload.keys().size() <= 40 &&
+        validOptStr(data, 'notes', 2000) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidBorangB(data) {
+      return data.keys().hasAll([
+          'userId', 'pastorName', 'missionId', 'districtId', 'year', 'month', 'status',
+          'sermonsPreached', 'bibleStudiesGiven', 'homeVisitations', 'hospitalVisitations',
+          'counselingSessions', 'evangelisticMeetings', 'baptisms', 'professionsOfFaith',
+          'boardMeetings', 'communionServices', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'userId', 'pastorName', 'missionId', 'regionId', 'districtId', 'districtName',
+          'year', 'month', 'status', 'sermonsPreached', 'bibleStudiesGiven',
+          'homeVisitations', 'hospitalVisitations', 'counselingSessions', 'evangelisticMeetings',
+          'baptisms', 'professionsOfFaith', 'boardMeetings', 'communionServices',
+          'anointings', 'weddings', 'funerals', 'childDedications',
+          'titheFaithfulnessNotes', 'challengesAndPrayer', 'nextMonthGoals',
+          'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.userId) &&
+        data.pastorName is string && data.pastorName.size() >= 1 && data.pastorName.size() <= 120 &&
+        isValidId(data.missionId) &&
+        validOptStr(data, 'regionId', 128) &&
+        isValidId(data.districtId) &&
+        validOptStr(data, 'districtName', 120) &&
+        data.year is int && data.year >= 2000 && data.year <= 2100 &&
+        data.month is int && data.month >= 1 && data.month <= 12 &&
+        data.status in ['draft', 'submitted'] &&
+        data.sermonsPreached is int && data.sermonsPreached >= 0 && data.sermonsPreached <= 1000 &&
+        data.bibleStudiesGiven is int && data.bibleStudiesGiven >= 0 && data.bibleStudiesGiven <= 2000 &&
+        data.homeVisitations is int && data.homeVisitations >= 0 && data.homeVisitations <= 2000 &&
+        data.hospitalVisitations is int && data.hospitalVisitations >= 0 && data.hospitalVisitations <= 1000 &&
+        data.counselingSessions is int && data.counselingSessions >= 0 && data.counselingSessions <= 1000 &&
+        data.evangelisticMeetings is int && data.evangelisticMeetings >= 0 && data.evangelisticMeetings <= 1000 &&
+        data.baptisms is int && data.baptisms >= 0 && data.baptisms <= 5000 &&
+        data.professionsOfFaith is int && data.professionsOfFaith >= 0 && data.professionsOfFaith <= 5000 &&
+        data.boardMeetings is int && data.boardMeetings >= 0 && data.boardMeetings <= 500 &&
+        data.communionServices is int && data.communionServices >= 0 && data.communionServices <= 500 &&
+        validOptInt(data, 'anointings', 0, 500) &&
+        validOptInt(data, 'weddings', 0, 500) &&
+        validOptInt(data, 'funerals', 0, 500) &&
+        validOptInt(data, 'childDedications', 0, 500) &&
+        validOptStr(data, 'titheFaithfulnessNotes', 1500) &&
+        validOptStr(data, 'challengesAndPrayer', 2000) &&
+        validOptStr(data, 'nextMonthGoals', 2000) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidActivity(data) {
+      return data.keys().hasAll(['userId', 'missionId', 'title', 'category', 'date', 'durationMinutes', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['userId', 'missionId', 'districtId', 'churchId', 'churchName', 'title', 'category', 'date', 'durationMinutes', 'participants', 'location', 'notes', 'createdAt', 'updatedAt']) &&
+        isValidId(data.userId) &&
+        isValidId(data.missionId) &&
+        validOptStr(data, 'districtId', 128) &&
+        validOptStr(data, 'churchId', 128) &&
+        validOptStr(data, 'churchName', 160) &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 160 &&
+        data.category in ['visitation', 'evangelism', 'meeting', 'worship', 'counseling', 'training', 'administration'] &&
+        data.date is string && data.date.size() >= 8 && data.date.size() <= 32 &&
+        data.durationMinutes is int && data.durationMinutes >= 0 && data.durationMinutes <= 10080 &&
+        validOptInt(data, 'participants', 0, 50000) &&
+        validOptStr(data, 'location', 160) &&
+        validOptStr(data, 'notes', 2000) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidAppointment(data) {
+      return data.keys().hasAll(['userId', 'title', 'contactName', 'dateTime', 'status', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['userId', 'title', 'contactName', 'contactPhone', 'location', 'dateTime', 'status', 'notes', 'createdAt', 'updatedAt']) &&
+        isValidId(data.userId) &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 160 &&
+        data.contactName is string && data.contactName.size() >= 1 && data.contactName.size() <= 120 &&
+        validOptStr(data, 'contactPhone', 40) &&
+        validOptStr(data, 'location', 160) &&
+        data.dateTime is string && data.dateTime.size() >= 8 && data.dateTime.size() <= 40 &&
+        data.status in ['scheduled', 'completed', 'cancelled'] &&
+        validOptStr(data, 'notes', 1500) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidTodo(data) {
+      return data.keys().hasAll(['userId', 'title', 'priority', 'completed', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['userId', 'title', 'priority', 'dueDate', 'completed', 'createdAt', 'updatedAt']) &&
+        isValidId(data.userId) &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 200 &&
+        data.priority in ['low', 'medium', 'high'] &&
+        validOptStr(data, 'dueDate', 32) &&
+        data.completed is bool &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidEvent(data) {
+      return data.keys().hasAll(['userId', 'title', 'category', 'startDate', 'endDate', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['userId', 'missionId', 'districtId', 'title', 'category', 'startDate', 'endDate', 'location', 'description', 'createdAt', 'updatedAt']) &&
+        isValidId(data.userId) &&
+        validOptStr(data, 'missionId', 128) &&
+        validOptStr(data, 'districtId', 128) &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 160 &&
+        data.category is string && data.category.size() >= 1 && data.category.size() <= 64 &&
+        data.startDate is string && data.startDate.size() >= 8 && data.startDate.size() <= 40 &&
+        data.endDate is string && data.endDate.size() >= 8 && data.endDate.size() <= 40 &&
+        validOptStr(data, 'location', 160) &&
+        validOptStr(data, 'description', 2000) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidGlobalEvent(data) {
+      return data.keys().hasAll(['missionId', 'title', 'category', 'startDate', 'endDate', 'isActive', 'createdBy', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['missionId', 'title', 'category', 'startDate', 'endDate', 'location', 'description', 'isSpecialEvent', 'isActive', 'createdBy', 'createdAt', 'updatedAt']) &&
+        isValidId(data.missionId) &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 160 &&
+        data.category is string && data.category.size() >= 1 && data.category.size() <= 64 &&
+        data.startDate is string && data.startDate.size() >= 8 && data.startDate.size() <= 40 &&
+        data.endDate is string && data.endDate.size() >= 8 && data.endDate.size() <= 40 &&
+        validOptStr(data, 'location', 160) &&
+        validOptStr(data, 'description', 2000) &&
+        validOptBool(data, 'isSpecialEvent') &&
+        data.isActive is bool &&
+        isValidId(data.createdBy) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidResource(data) {
+      return data.keys().hasAll(['missionId', 'title', 'category', 'url', 'isActive', 'uploadedBy', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['missionId', 'title', 'category', 'description', 'url', 'fileType', 'isActive', 'uploadedBy', 'createdAt', 'updatedAt']) &&
+        isValidId(data.missionId) &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 160 &&
+        data.category is string && data.category.size() >= 1 && data.category.size() <= 64 &&
+        validOptStr(data, 'description', 1000) &&
+        data.url is string && data.url.size() >= 1 && data.url.size() <= 500 &&
+        validOptStr(data, 'fileType', 32) &&
+        data.isActive is bool &&
+        isValidId(data.uploadedBy) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidLocationRequest(data) {
+      return data.keys().hasAll(['userId', 'userName', 'userEmail', 'churchName', 'status', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['userId', 'userName', 'userEmail', 'missionName', 'regionName', 'districtName', 'churchName', 'notes', 'status', 'reviewedBy', 'createdAt', 'updatedAt']) &&
+        isValidId(data.userId) &&
+        data.userName is string && data.userName.size() >= 1 && data.userName.size() <= 120 &&
+        data.userEmail is string && data.userEmail.size() >= 3 && data.userEmail.size() <= 200 &&
+        validOptStr(data, 'missionName', 120) &&
+        validOptStr(data, 'regionName', 120) &&
+        validOptStr(data, 'districtName', 120) &&
+        data.churchName is string && data.churchName.size() >= 1 && data.churchName.size() <= 160 &&
+        validOptStr(data, 'notes', 1000) &&
+        data.status in ['pending', 'approved', 'rejected'] &&
+        validOptStr(data, 'reviewedBy', 128) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidSetting(data) {
+      return data.keys().hasAll(['key', 'updatedAt']) &&
+        data.keys().hasOnly(['key', 'allowedDomains', 'appVersion', 'maintenanceMode', 'updatedBy', 'updatedAt']) &&
+        data.key is string && data.key.size() >= 1 && data.key.size() <= 80 &&
+        (!('allowedDomains' in data) || (data.allowedDomains is list && data.allowedDomains.size() <= 50 && (data.allowedDomains.size() == 0 || data.allowedDomains[0] is string))) &&
+        validOptStr(data, 'appVersion', 32) &&
+        validOptBool(data, 'maintenanceMode') &&
+        validOptStr(data, 'updatedBy', 128) &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidAdminActivity(data) {
+      return data.keys().hasAll(['actorId', 'actorName', 'action', 'targetType', 'summary', 'createdAt']) &&
+        data.keys().hasOnly(['actorId', 'actorName', 'action', 'targetType', 'targetId', 'summary', 'createdAt']) &&
+        isValidId(data.actorId) &&
+        data.actorName is string && data.actorName.size() >= 1 && data.actorName.size() <= 120 &&
+        data.action is string && data.action.size() >= 1 && data.action.size() <= 120 &&
+        data.targetType is string && data.targetType.size() >= 1 && data.targetType.size() <= 64 &&
+        validOptStr(data, 'targetId', 128) &&
+        data.summary is string && data.summary.size() >= 1 && data.summary.size() <= 500 &&
+        data.createdAt is timestamp;
+    }
+
+    // -------------------------------------------------------------------------
+    // Collection Rules
+    // -------------------------------------------------------------------------
+
+    // Test connection doc
+    match /test/{docId} {
+      allow get: if isValidId(docId) && isSignedIn();
+    }
+
+    // Users (PII Isolation + Strict Anti-Self-Elevation)
+    match /users/{userId} {
+      allow get: if isValidId(userId) && isSignedIn() && (request.auth.uid == userId || isMissionAdmin());
+      allow list: if isSignedIn() && (existing().uid == request.auth.uid || isMissionAdmin());
+      allow create: if isValidId(userId) && isVerified() &&
+        isValidUser(incoming()) &&
+        incoming().uid == request.auth.uid &&
+        request.auth.uid == userId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time && (
+          isBootstrappedSuperAdmin() || (
+            incoming().userRole == 'user' &&
+            incoming().level == 1 &&
+            incoming().get('isAdmin', false) == false &&
+            incoming().get('isPremium', false) == false
+          )
+        );
+      allow update: if isValidId(userId) && isVerified() &&
+        isValidUser(incoming()) &&
+        incoming().uid == existing().uid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          // Self profile & onboarding updates (cannot change role, level, isAdmin, isPremium, isActive)
+          (
+            request.auth.uid == userId &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'displayName', 'photoURL', 'phone', 'missionId', 'missionName',
+              'regionId', 'regionName', 'districtId', 'districtName',
+              'churchId', 'churchName', 'onboardingCompleted', 'updatedAt'
+            ])
+          ) ||
+          // Super Admin can update any user including assigning Admin / Super Admin
+          isSuperAdmin() ||
+          // Admin can manage users below admin/super_admin
+          (
+            isAdmin() &&
+            !(incoming().userRole in ['super_admin', 'admin']) &&
+            !(existing().userRole in ['super_admin'])
+          ) ||
+          // Mission Admin scoped to own mission and roles below mission_admin
+          (
+            isMissionAdminFor(existing().get('missionId', '')) &&
+            !(incoming().userRole in ['super_admin', 'admin', 'mission_admin']) &&
+            !(existing().userRole in ['super_admin', 'admin', 'mission_admin'])
+          )
+        );
+      allow delete: if isValidId(userId) && isSuperAdmin() && request.auth.uid != userId;
+    }
+
+    // Missions & subcollections
+    match /missions/{missionId} {
+      allow get: if isValidId(missionId) && isSignedIn();
+      allow list: if isSignedIn() && existing().name is string;
+      allow create: if isValidId(missionId) && isAdmin() && isValidMission(incoming()) &&
+        incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isValidId(missionId) && isAdmin() && isValidMission(incoming()) &&
+        incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time;
+      allow delete: if isValidId(missionId) && isSuperAdmin();
+
+      match /departments/{departmentId} {
+        allow get: if isValidId(missionId) && isValidId(departmentId) && isSignedIn();
+        allow list: if isValidId(missionId) && isSignedIn() && existing().missionId == missionId;
+        allow create: if isValidId(missionId) && isValidId(departmentId) && isMissionAdminFor(missionId) &&
+          isValidDepartment(incoming()) && incoming().missionId == missionId &&
+          incoming().createdAt == request.time && incoming().updatedAt == request.time;
+        allow update: if isValidId(missionId) && isValidId(departmentId) && isMissionAdminFor(missionId) &&
+          isValidDepartment(incoming()) && incoming().missionId == existing().missionId &&
+          incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time;
+        allow delete: if isValidId(missionId) && isValidId(departmentId) && isAdmin();
+      }
+
+      match /reports/{reportId} {
+        allow get: if isValidId(missionId) && isValidId(reportId) && isMissionLeadership();
+        allow list: if isValidId(missionId) && isMissionLeadership() && existing().missionId == missionId;
+        allow create: if isValidId(missionId) && isValidId(reportId) && isMissionAdminFor(missionId) &&
+          isValidMissionReportSummary(incoming()) &&
+          incoming().missionId == missionId && incoming().createdBy == request.auth.uid &&
+          incoming().createdAt == request.time && incoming().updatedAt == request.time;
+        allow update: if isValidId(missionId) && isValidId(reportId) && isMissionAdminFor(missionId) &&
+          isValidMissionReportSummary(incoming()) &&
+          incoming().missionId == existing().missionId && incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time;
+        allow delete: if isValidId(missionId) && isValidId(reportId) && isAdmin();
+      }
+    }
+
+    // Regions
+    match /regions/{regionId} {
+      allow get: if isValidId(regionId) && isSignedIn();
+      allow list: if isSignedIn() && existing().missionId is string;
+      allow create: if isValidId(regionId) && isValidRegion(incoming()) && isMissionAdminFor(incoming().missionId) &&
+        exists(/databases/$(database)/documents/missions/$(incoming().missionId)) &&
+        incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isValidId(regionId) && isValidRegion(incoming()) && isMissionAdminFor(existing().missionId) &&
+        incoming().missionId == existing().missionId &&
+        incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time;
+      allow delete: if isValidId(regionId) && isAdmin();
+    }
+
+    // Districts
+    match /districts/{districtId} {
+      allow get: if isValidId(districtId) && isSignedIn();
+      allow list: if isSignedIn() && existing().missionId is string;
+      allow create: if isValidId(districtId) && isValidDistrict(incoming()) && isMissionAdminFor(incoming().missionId) &&
+        exists(/databases/$(database)/documents/regions/$(incoming().regionId)) &&
+        incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isValidId(districtId) && isValidDistrict(incoming()) && isMissionAdminFor(existing().missionId) &&
+        incoming().missionId == existing().missionId &&
+        incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time;
+      allow delete: if isValidId(districtId) && isAdmin();
+    }
+
+    // Churches
+    match /churches/{churchId} {
+      allow get: if isValidId(churchId) && isSignedIn();
+      allow list: if isSignedIn() && existing().districtId is string;
+      allow create: if isValidId(churchId) && isValidChurch(incoming()) && isMissionAdminFor(incoming().missionId) &&
+        exists(/databases/$(database)/documents/districts/$(incoming().districtId)) &&
+        incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isValidId(churchId) && isValidChurch(incoming()) && isMissionAdminFor(existing().missionId) &&
+        incoming().missionId == existing().missionId &&
+        incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time;
+      allow delete: if isValidId(churchId) && isAdmin();
+    }
+
+    // Staff Directory
+    match /staff/{staffId} {
+      allow get: if isValidId(staffId) && isSignedIn();
+      allow list: if isSignedIn() && existing().missionId is string;
+      allow create: if isValidId(staffId) && isValidStaff(incoming()) && isMissionAdminFor(incoming().missionId) &&
+        incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isValidId(staffId) && isValidStaff(incoming()) && isMissionAdminFor(existing().missionId) &&
+        incoming().missionId == existing().missionId &&
+        incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time;
+      allow delete: if isValidId(staffId) && isAdmin();
+    }
+
+    // Departments Directory
+    match /departments/{departmentId} {
+      allow get: if isValidId(departmentId) && isSignedIn();
+      allow list: if isSignedIn() && existing().missionId is string;
+      allow create: if isValidId(departmentId) && isValidDepartment(incoming()) && isEditorInMission(incoming().missionId) &&
+        incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isValidId(departmentId) && isValidDepartment(incoming()) && isEditorInMission(existing().missionId) &&
+        incoming().missionId == existing().missionId &&
+        incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time;
+      allow delete: if isValidId(departmentId) && isAdmin();
+    }
+
+    // Financial Reports (Church Treasurer + Mission Leadership)
+    match /financial_reports/{reportId} {
+      allow get: if isValidId(reportId) && isSignedIn() && (
+        existing().submittedBy == request.auth.uid ||
+        isChurchTreasurerFor(existing().churchId) ||
+        isMissionLeadership()
+      );
+      allow list: if isSignedIn() && (
+        existing().submittedBy == request.auth.uid ||
+        (userDocExists() && callerDoc().userRole == 'church_treasurer' && existing().churchId == callerDoc().get('churchId', '')) ||
+        isMissionLeadership()
+      );
+      allow create: if isValidId(reportId) && isVerified() &&
+        isValidFinancialReport(incoming()) &&
+        incoming().submittedBy == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        exists(/databases/$(database)/documents/churches/$(incoming().churchId)) && (
+          isMissionAdminFor(incoming().missionId) ||
+          isChurchTreasurerFor(incoming().churchId)
+        );
+      allow update: if isValidId(reportId) && isVerified() &&
+        isValidFinancialReport(incoming()) &&
+        incoming().churchId == existing().churchId &&
+        incoming().missionId == existing().missionId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isMissionAdminFor(existing().missionId) ||
+          (
+            isChurchTreasurerFor(existing().churchId) &&
+            existing().status != 'verified' &&
+            incoming().status in ['draft', 'submitted']
+          )
+        );
+      allow delete: if isValidId(reportId) && isAdmin();
+    }
+
+    // FAM Data (1:1 linked to Financial Report)
+    match /fam_data/{famId} {
+      allow get: if isValidId(famId) && isSignedIn() && (
+        existing().submittedBy == request.auth.uid ||
+        isChurchTreasurerFor(existing().churchId) ||
+        isMissionLeadership()
+      );
+      allow list: if isSignedIn() && (
+        existing().submittedBy == request.auth.uid ||
+        (userDocExists() && callerDoc().userRole == 'church_treasurer' && existing().churchId == callerDoc().get('churchId', '')) ||
+        isMissionLeadership()
+      );
+      allow create: if isValidId(famId) && isVerified() &&
+        isValidFamData(incoming()) &&
+        incoming().submittedBy == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time && (
+          isMissionAdminFor(incoming().missionId) ||
+          isChurchTreasurerFor(incoming().churchId)
+        );
+      allow update: if isValidId(famId) && isVerified() &&
+        isValidFamData(incoming()) &&
+        incoming().reportId == existing().reportId &&
+        incoming().churchId == existing().churchId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isMissionAdminFor(existing().missionId) ||
+          isChurchTreasurerFor(existing().churchId)
+        );
+      allow delete: if isValidId(famId) && isAdmin();
+    }
+
+    // Quarterly Department Reports (Deterministic ID: {churchId}_{year}_Q{quarter}_{department})
+    match /quarterly_department_report/{reportId} {
+      allow get: if isValidId(reportId) && isSignedIn() && (
+        existing().submittedBy == request.auth.uid ||
+        isDistrictPastorFor(existing().districtId) ||
+        isMissionLeadership()
+      );
+      allow list: if isSignedIn() && (
+        existing().submittedBy == request.auth.uid ||
+        (userDocExists() && callerDoc().userRole == 'district_pastor' && existing().districtId == callerDoc().get('districtId', '')) ||
+        isMissionLeadership()
+      );
+      allow create: if isValidId(reportId) && isVerified() &&
+        isValidQuarterlyReport(incoming()) &&
+        incoming().submittedBy == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        exists(/databases/$(database)/documents/churches/$(incoming().churchId)) && (
+          isMissionAdminFor(incoming().missionId) ||
+          isDistrictPastorFor(incoming().districtId)
+        );
+      allow update: if isValidId(reportId) && isVerified() &&
+        isValidQuarterlyReport(incoming()) &&
+        incoming().churchId == existing().churchId &&
+        incoming().department == existing().department &&
+        incoming().year == existing().year &&
+        incoming().quarter == existing().quarter &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isMissionAdminFor(existing().missionId) ||
+          isDistrictPastorFor(existing().districtId)
+        );
+      allow delete: if isValidId(reportId) && isAdmin();
+    }
+
+    // Borang B Monthly Pastoral Reports
+    match /borang_b_reports/{reportId} {
+      allow get: if isValidId(reportId) && isSignedIn() && (
+        existing().userId == request.auth.uid ||
+        isMissionLeadership()
+      );
+      allow list: if isSignedIn() && (
+        existing().userId == request.auth.uid ||
+        isMissionLeadership()
+      );
+      allow create: if isValidId(reportId) && isVerified() &&
+        isValidBorangB(incoming()) &&
+        incoming().userId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(reportId) && isVerified() &&
+        isValidBorangB(incoming()) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          existing().userId == request.auth.uid ||
+          isAdmin()
+        );
+      allow delete: if isValidId(reportId) && isVerified() && (
+        existing().userId == request.auth.uid || isAdmin()
+      );
+    }
+
+    // Pastoral Activities
+    match /activities/{activityId} {
+      allow get: if isValidId(activityId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow create: if isValidId(activityId) && isVerified() &&
+        isValidActivity(incoming()) &&
+        incoming().userId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(activityId) && isVerified() &&
+        isValidActivity(incoming()) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          existing().userId == request.auth.uid || isAdmin()
+        );
+      allow delete: if isValidId(activityId) && isVerified() && (
+        existing().userId == request.auth.uid || isAdmin()
+      );
+    }
+
+    // Pastoral Appointments
+    match /appointments/{appointmentId} {
+      allow get: if isValidId(appointmentId) && isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isValidId(appointmentId) && isVerified() &&
+        isValidAppointment(incoming()) &&
+        incoming().userId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(appointmentId) && isVerified() &&
+        isValidAppointment(incoming()) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        existing().userId == request.auth.uid;
+      allow delete: if isValidId(appointmentId) && isVerified() && existing().userId == request.auth.uid;
+    }
+
+    // Personal To-Dos
+    match /todos/{todoId} {
+      allow get: if isValidId(todoId) && isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isValidId(todoId) && isVerified() &&
+        isValidTodo(incoming()) &&
+        incoming().userId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(todoId) && isVerified() &&
+        isValidTodo(incoming()) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        existing().userId == request.auth.uid;
+      allow delete: if isValidId(todoId) && isVerified() && existing().userId == request.auth.uid;
+    }
+
+    // Personal / Local Events
+    match /events/{eventId} {
+      allow get: if isValidId(eventId) && isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+      allow create: if isValidId(eventId) && isVerified() &&
+        isValidEvent(incoming()) &&
+        incoming().userId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(eventId) && isVerified() &&
+        isValidEvent(incoming()) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        existing().userId == request.auth.uid;
+      allow delete: if isValidId(eventId) && isVerified() && existing().userId == request.auth.uid;
+    }
+
+    // Mission-Wide Global Events
+    match /global_events/{eventId} {
+      allow get: if isValidId(eventId) && isSignedIn();
+      allow list: if isSignedIn() && existing().missionId is string;
+      allow create: if isValidId(eventId) && isValidGlobalEvent(incoming()) &&
+        isEditorInMission(incoming().missionId) &&
+        incoming().createdBy == request.auth.uid &&
+        incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isValidId(eventId) && isValidGlobalEvent(incoming()) &&
+        isEditorInMission(existing().missionId) &&
+        incoming().missionId == existing().missionId &&
+        incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time;
+      allow delete: if isValidId(eventId) && isAdmin();
+    }
+
+    // Shared Resources
+    match /resources/{resourceId} {
+      allow get: if isValidId(resourceId) && isSignedIn();
+      allow list: if isSignedIn() && existing().missionId is string;
+      allow create: if isValidId(resourceId) && isValidResource(incoming()) &&
+        isEditorInMission(incoming().missionId) &&
+        incoming().uploadedBy == request.auth.uid &&
+        incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isValidId(resourceId) && isValidResource(incoming()) &&
+        isEditorInMission(existing().missionId) &&
+        incoming().missionId == existing().missionId &&
+        incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time;
+      allow delete: if isValidId(resourceId) && isAdmin();
+    }
+
+    // Onboarding Location Requests
+    match /locationRequests/{requestId} {
+      allow get: if isValidId(requestId) && isSignedIn() && (existing().userId == request.auth.uid || isMissionAdmin());
+      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isMissionAdmin());
+      allow create: if isValidId(requestId) && isVerified() &&
+        isValidLocationRequest(incoming()) &&
+        incoming().userId == request.auth.uid &&
+        incoming().status == 'pending' &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(requestId) && isMissionAdmin() &&
+        isValidLocationRequest(incoming()) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time;
+      allow delete: if isValidId(requestId) && isAdmin();
+    }
+
+    // App Settings
+    match /settings/{settingId} {
+      allow get: if isValidId(settingId) && isSignedIn();
+      allow list: if isSignedIn() && existing().key is string;
+      allow create: if isValidId(settingId) && isAdmin() && isValidSetting(incoming()) &&
+        incoming().updatedAt == request.time;
+      allow update: if isValidId(settingId) && isAdmin() && isValidSetting(incoming()) &&
+        incoming().updatedAt == request.time;
+      allow delete: if isValidId(settingId) && isSuperAdmin();
+    }
+
+    // Admin Activity Audit Log (Append-only)
+    match /admin_activity/{activityId} {
+      allow get: if isValidId(activityId) && isMissionAdmin();
+      allow list: if isMissionAdmin() && existing().actorId is string;
+      allow create: if isValidId(activityId) && isMissionAdmin() &&
+        isValidAdminActivity(incoming()) &&
+        incoming().actorId == request.auth.uid &&
+        incoming().createdAt == request.time;
+      allow update: if false;
+      allow delete: if false;
+    }
+  }
+}
