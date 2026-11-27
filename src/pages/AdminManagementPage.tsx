@@ -5,10 +5,10 @@ import {
   deleteDoc,
   doc,
   onSnapshot,
-  orderBy,
   query,
   serverTimestamp,
   updateDoc,
+  where,
 } from 'firebase/firestore';
 import {
   Check,
@@ -23,10 +23,11 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useMission } from '../contexts/MissionContext';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { db, handleFirestoreError, OperationType, reportListenerError } from '../lib/firebase';
 import { bootstrapSabahMissionBaseline } from '../lib/seedData';
 import { useToast } from '../components/Toast';
 import {
+  normalizeUserRole,
   ROLE_META,
   type Church,
   type District,
@@ -39,6 +40,26 @@ import {
 } from '../types';
 
 type AdminTab = 'approvals' | 'unions' | 'missions' | 'regions' | 'districts' | 'churches';
+
+function hydrateUserDoc(uid: string, raw: Record<string, unknown>): UserProfile {
+  const userRole = normalizeUserRole(raw);
+  return {
+    ...(raw as unknown as UserProfile),
+    uid,
+    email: String(raw.email || ''),
+    displayName: String(raw.displayName || raw.name || raw.email || uid),
+    userRole,
+    role: raw.role ? String(raw.role) : userRole,
+    roleTitle: raw.roleTitle ? String(raw.roleTitle) : ROLE_META[userRole].label,
+    level: typeof raw.level === 'number' ? raw.level : ROLE_META[userRole].level,
+    missionId: String(raw.missionId || raw.mission || ''),
+    missionName: String(raw.missionName || ''),
+    districtId: String(raw.districtId || raw.district || ''),
+    districtName: String(raw.districtName || ''),
+    isActive: raw.isActive !== false,
+    onboardingCompleted: Boolean(raw.onboardingCompleted),
+  };
+}
 
 function resolveApprovalStatus(u: UserProfile): UserApprovalStatus {
   if (
@@ -59,6 +80,7 @@ export function AdminManagementPage() {
   const [tab, setTab] = useState<AdminTab>('approvals');
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(true);
+  const [usersError, setUsersError] = useState<string | null>(null);
   const [seeding, setSeeding] = useState(false);
 
   // User approvals & filtering
@@ -115,23 +137,44 @@ export function AdminManagementPage() {
       return;
     }
     setLoadingUsers(true);
+    setUsersError(null);
+
+    let fallbackUnsub: (() => void) | null = null;
+    const isScopedMissionAdmin =
+      profile.userRole === 'mission_admin' && Boolean(profile.missionId);
+
+    const handleSnap = (snap: { docs: { id: string; data: () => Record<string, unknown> }[] }) => {
+      const items = snap.docs
+        .map((d) => hydrateUserDoc(d.id, d.data()))
+        .sort((a, b) => String(a.displayName || '').localeCompare(String(b.displayName || '')));
+      setUsers(items);
+      setUsersError(null);
+      setLoadingUsers(false);
+    };
+
     const unsub = onSnapshot(
-      query(collection(db, 'users'), orderBy('displayName', 'asc')),
-      (snap) => {
-        setUsers(
-          snap.docs.map((d) => ({
-            ...(d.data() as UserProfile),
-            uid: d.id,
-          })),
-        );
-        setLoadingUsers(false);
-      },
+      collection(db, 'users'),
+      handleSnap,
       (err) => {
+        if (isScopedMissionAdmin) {
+          fallbackUnsub = onSnapshot(
+            query(collection(db, 'users'), where('mission', '==', profile.missionId)),
+            handleSnap,
+            (err2) => {
+              setLoadingUsers(false);
+              setUsersError(reportListenerError(err2, OperationType.LIST, 'users'));
+            },
+          );
+          return;
+        }
         setLoadingUsers(false);
-        handleFirestoreError(err, OperationType.LIST, 'users');
+        setUsersError(reportListenerError(err, OperationType.LIST, 'users'));
       },
     );
-    return () => unsub();
+    return () => {
+      unsub();
+      if (fallbackUnsub) fallbackUnsub();
+    };
   }, [profile, capabilities.canManageUsers]);
 
   const assignableRoles = useMemo(() => {
@@ -627,6 +670,15 @@ export function AdminManagementPage() {
                 {pendingUsers.length} pending
               </span>
             </div>
+
+            {usersError && (
+              <div className="p-5 bg-red-50 dark:bg-red-950/30 border-b border-red-200 dark:border-red-900 text-xs text-red-800 dark:text-red-200 space-y-1">
+                <div className="font-semibold">Unable to load user directory from Firestore ({usersError})</div>
+                <div>
+                  Your active Firebase rules on <span className="font-mono-tabular">pastor-report-e4c52</span> are blocking <span className="font-mono-tabular">users</span> list access for this account. Ensure your user document has <span className="font-mono-tabular">isAdmin: true</span> (or <span className="font-mono-tabular">userRole: &quot;superAdmin&quot;</span>), or publish the updated <span className="font-mono-tabular">firestore.rules</span> in Firebase Console.
+                </div>
+              </div>
+            )}
 
             {loadingUsers ? (
               <div className="p-8 text-center text-xs text-[var(--text-muted)]">

@@ -13,7 +13,7 @@ import {
 import { Download, Eye, Printer, Save, Send, X } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useMission } from '../contexts/MissionContext';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { db, handleFirestoreError, OperationType, reportListenerError } from '../lib/firebase';
 import {
   exportToCsv,
   exportToExcel,
@@ -145,31 +145,32 @@ export function QuarterlyDepartmentsPage() {
     if (!profile) return;
     setLoading(true);
     const q = capabilities.canAccessAllFinancialReports
-      ? query(collection(db, 'quarterly_department_report'), orderBy('year', 'desc'))
+      ? query(collection(db, 'quarterly_department_reports'), orderBy('year', 'desc'))
       : profile.districtId
         ? query(
-            collection(db, 'quarterly_department_report'),
+            collection(db, 'quarterly_department_reports'),
             where('districtId', '==', profile.districtId),
           )
         : query(
-            collection(db, 'quarterly_department_report'),
+            collection(db, 'quarterly_department_reports'),
             where('submittedBy', '==', profile.uid),
           );
 
     const unsub = onSnapshot(
       q,
       (snap) => {
-        setReports(
-          snap.docs.map((d) => ({
+        const items = snap.docs
+          .map((d) => ({
             id: d.id,
             ...(d.data() as Omit<QuarterlyDepartmentReport, 'id'>),
-          })),
-        );
+          }))
+          .sort((a, b) => (b.year - a.year) || (b.quarter - a.quarter));
+        setReports(items);
         setLoading(false);
       },
       (err) => {
         setLoading(false);
-        handleFirestoreError(err, OperationType.LIST, 'quarterly_department_report');
+        reportListenerError(err, OperationType.LIST, 'quarterly_department_reports');
       },
     );
     return () => unsub();
@@ -182,7 +183,7 @@ export function QuarterlyDepartmentsPage() {
 
   useEffect(() => {
     if (!deterministicId) return;
-    getDoc(doc(db, 'quarterly_department_report', deterministicId))
+    getDoc(doc(db, 'quarterly_department_reports', deterministicId))
       .then((snap) => {
         if (snap.exists()) {
           const data = snap.data() as QuarterlyDepartmentReport;
@@ -196,10 +197,10 @@ export function QuarterlyDepartmentsPage() {
         }
       })
       .catch((err) =>
-        handleFirestoreError(
+        reportListenerError(
           err,
           OperationType.GET,
-          `quarterly_department_report/${deterministicId}`,
+          `quarterly_department_reports/${deterministicId}`,
         ),
       );
   }, [deterministicId]);
@@ -222,7 +223,7 @@ export function QuarterlyDepartmentsPage() {
 
     try {
       await setDoc(
-        doc(db, 'quarterly_department_report', deterministicId),
+        doc(db, 'quarterly_department_reports', deterministicId),
         {
           missionId: church.missionId,
           regionId: church.regionId,
@@ -253,7 +254,7 @@ export function QuarterlyDepartmentsPage() {
       handleFirestoreError(
         err,
         OperationType.WRITE,
-        `quarterly_department_report/${deterministicId}`,
+        `quarterly_department_reports/${deterministicId}`,
       );
     } finally {
       setSaving(false);

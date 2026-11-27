@@ -22,7 +22,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useMission } from '../contexts/MissionContext';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { db, handleFirestoreError, OperationType, reportListenerError } from '../lib/firebase';
 import {
   exportToCsv,
   exportToExcel,
@@ -101,28 +101,27 @@ export function FinancialReportsPage() {
         ? query(
             collection(db, 'financial_reports'),
             where('churchId', '==', profile.churchId),
-            orderBy('year', 'desc'),
           )
         : query(
             collection(db, 'financial_reports'),
             where('submittedBy', '==', profile.uid),
-            orderBy('year', 'desc'),
           );
 
     const unsub = onSnapshot(
       q,
       (snap) => {
-        setReports(
-          snap.docs.map((d) => ({
+        const items = snap.docs
+          .map((d) => ({
             id: d.id,
             ...(d.data() as Omit<FinancialReport, 'id'>),
-          })),
-        );
+          }))
+          .sort((a, b) => (b.year - a.year) || (b.month - a.month));
+        setReports(items);
         setLoading(false);
       },
       (err) => {
         setLoading(false);
-        handleFirestoreError(err, OperationType.LIST, 'financial_reports');
+        reportListenerError(err, OperationType.LIST, 'financial_reports');
       },
     );
     return () => unsub();

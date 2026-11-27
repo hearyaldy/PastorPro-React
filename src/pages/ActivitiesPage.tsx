@@ -5,7 +5,6 @@ import {
   deleteDoc,
   doc,
   onSnapshot,
-  orderBy,
   query,
   serverTimestamp,
   updateDoc,
@@ -14,7 +13,7 @@ import {
 import { Download, Edit3, Plus, Printer, Search, Trash2, X } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useMission } from '../contexts/MissionContext';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { db, handleFirestoreError, OperationType, reportListenerError } from '../lib/firebase';
 import {
   exportToCsv,
   exportToExcel,
@@ -62,22 +61,22 @@ export function ActivitiesPage() {
     const q = query(
       collection(db, 'activities'),
       where('userId', '==', profile.uid),
-      orderBy('date', 'desc'),
     );
     const unsub = onSnapshot(
       q,
       (snap) => {
-        setActivities(
-          snap.docs.map((d) => ({
+        const items = snap.docs
+          .map((d) => ({
             id: d.id,
             ...(d.data() as Omit<PastoralActivity, 'id'>),
-          })),
-        );
+          }))
+          .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+        setActivities(items);
         setLoading(false);
       },
       (err) => {
         setLoading(false);
-        handleFirestoreError(err, OperationType.LIST, 'activities');
+        reportListenerError(err, OperationType.LIST, 'activities');
       },
     );
     return () => unsub();

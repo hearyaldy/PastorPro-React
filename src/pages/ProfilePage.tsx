@@ -3,7 +3,7 @@ import { addDoc, collection, onSnapshot, query, serverTimestamp, where } from 'f
 import { Check, MapPinPlus, Shield, User } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useMission } from '../contexts/MissionContext';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { db, handleFirestoreError, OperationType, reportListenerError } from '../lib/firebase';
 import { useToast } from '../components/Toast';
 import { ROLE_META } from '../types';
 
@@ -54,12 +54,16 @@ export function ProfilePage() {
     const unsubAct = onSnapshot(
       query(collection(db, 'activities'), where('userId', '==', profile.uid)),
       (snap) => setActivityCount(snap.size),
-      (err) => handleFirestoreError(err, OperationType.LIST, 'activities'),
+      (err) => {
+        reportListenerError(err, OperationType.LIST, 'activities');
+      },
     );
     const unsubB = onSnapshot(
       query(collection(db, 'borang_b_reports'), where('userId', '==', profile.uid)),
       (snap) => setBorangBCount(snap.size),
-      (err) => handleFirestoreError(err, OperationType.LIST, 'borang_b_reports'),
+      (err) => {
+        reportListenerError(err, OperationType.LIST, 'borang_b_reports');
+      },
     );
     return () => {
       unsubAct();
@@ -143,9 +147,10 @@ export function ProfilePage() {
     try {
       await addDoc(collection(db, 'locationRequests'), {
         userId: profile.uid,
+        requestedBy: profile.uid,
         userName: profile.displayName,
         userEmail: profile.email,
-        missionName: selectedMission?.name || 'Sabah Adventist Mission',
+        missionName: selectedMission?.name || 'General Mission',
         regionName: reqRegion.trim().slice(0, 120),
         districtName: reqDistrict.trim().slice(0, 120),
         churchName: reqChurch.trim().slice(0, 160),

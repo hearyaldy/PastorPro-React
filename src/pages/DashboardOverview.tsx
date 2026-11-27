@@ -3,7 +3,6 @@ import {
   collection,
   limit,
   onSnapshot,
-  orderBy,
   query,
   where,
 } from 'firebase/firestore';
@@ -19,7 +18,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useMission } from '../contexts/MissionContext';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { db, OperationType, reportListenerError } from '../lib/firebase';
 import { MONTHS, formatIsoDate } from '../lib/exportUtils';
 import { bootstrapSabahMissionBaseline } from '../lib/seedData';
 import { useToast } from '../components/Toast';
@@ -62,56 +61,60 @@ export function DashboardOverview({
         query(
           collection(db, 'activities'),
           where('userId', '==', profile.uid),
-          orderBy('date', 'desc'),
-          limit(5),
         ),
         (snap) => {
-          setRecentActivities(
-            snap.docs.map((d) => ({
+          const items = snap.docs
+            .map((d) => ({
               id: d.id,
               ...(d.data() as Omit<PastoralActivity, 'id'>),
-            })),
-          );
+            }))
+            .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))
+            .slice(0, 5);
+          setRecentActivities(items);
           setLoadingData(false);
         },
         (err) => {
           setLoadingData(false);
-          handleFirestoreError(err, OperationType.LIST, 'activities');
+          reportListenerError(err, OperationType.LIST, 'activities');
         },
       ),
       onSnapshot(
         query(
           collection(db, 'borang_b_reports'),
           where('userId', '==', profile.uid),
-          orderBy('year', 'desc'),
-          limit(6),
         ),
         (snap) => {
-          setBorangBList(
-            snap.docs.map((d) => ({
+          const items = snap.docs
+            .map((d) => ({
               id: d.id,
               ...(d.data() as Omit<BorangBReport, 'id'>),
-            })),
-          );
+            }))
+            .sort((a, b) => (b.year - a.year) || (b.month - a.month))
+            .slice(0, 6);
+          setBorangBList(items);
         },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'borang_b_reports'),
+        (err) => {
+          reportListenerError(err, OperationType.LIST, 'borang_b_reports');
+        },
       ),
       onSnapshot(
         query(
           collection(db, 'appointments'),
           where('userId', '==', profile.uid),
-          orderBy('dateTime', 'asc'),
-          limit(5),
         ),
         (snap) => {
-          setAppointments(
-            snap.docs.map((d) => ({
+          const items = snap.docs
+            .map((d) => ({
               id: d.id,
               ...(d.data() as Omit<Appointment, 'id'>),
-            })),
-          );
+            }))
+            .sort((a, b) => String(a.dateTime || '').localeCompare(String(b.dateTime || '')))
+            .slice(0, 5);
+          setAppointments(items);
         },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'appointments'),
+        (err) => {
+          reportListenerError(err, OperationType.LIST, 'appointments');
+        },
       ),
       onSnapshot(
         query(
@@ -127,7 +130,9 @@ export function DashboardOverview({
             })),
           );
         },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'todos'),
+        (err) => {
+          reportListenerError(err, OperationType.LIST, 'todos');
+        },
       ),
     ];
 

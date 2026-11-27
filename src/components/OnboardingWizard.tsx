@@ -9,7 +9,7 @@ import { ROLE_META } from '../types';
 import { useToast } from './Toast';
 
 export function OnboardingWizard() {
-  const { profile, updateOwnProfile, signOut } = useAuth();
+  const { profile, updateOwnProfile, bypassOnboarding, signOut } = useAuth();
   const { missions, regions, districts, churches, loadingHierarchy } = useMission();
   const { notify } = useToast();
 
@@ -90,9 +90,19 @@ export function OnboardingWizard() {
         churchName: church?.name || '',
         onboardingCompleted: true,
       });
-      notify('Onboarding completed. Welcome to Pastor Report.', 'success');
+      notify('Onboarding completed. Welcome to PastorPro.', 'success');
     } catch {
       notify('Failed to save onboarding details.', 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleBypassOnboarding = async () => {
+    setSaving(true);
+    try {
+      await bypassOnboarding();
+      notify('Onboarding skipped. You can complete your assignment anytime in My Profile.', 'info');
     } finally {
       setSaving(false);
     }
@@ -105,10 +115,11 @@ export function OnboardingWizard() {
     try {
       await addDoc(collection(db, 'locationRequests'), {
         userId: profile.uid,
+        requestedBy: profile.uid,
         userName: displayName.trim() || profile.displayName,
         userEmail: profile.email,
         missionName:
-          missions.find((m) => m.id === missionId)?.name || 'Sabah Adventist Mission',
+          missions.find((m) => m.id === missionId)?.name || 'General Mission',
         regionName: reqRegion.trim().slice(0, 120),
         districtName: reqDistrict.trim().slice(0, 120),
         churchName: reqChurch.trim().slice(0, 160),
@@ -142,13 +153,23 @@ export function OnboardingWizard() {
               Configure Your Mission Assignment
             </h1>
           </div>
-          <button
-            type="button"
-            onClick={signOut}
-            className="text-xs font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] whitespace-nowrap shrink-0"
-          >
-            Sign out
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={handleBypassOnboarding}
+              disabled={saving}
+              className="px-3 py-1.5 text-xs font-medium rounded-lg border border-[var(--border-hairline)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] whitespace-nowrap shrink-0"
+            >
+              Skip for now
+            </button>
+            <button
+              type="button"
+              onClick={signOut}
+              className="text-xs font-medium text-[var(--text-muted)] hover:text-[var(--text-primary)] whitespace-nowrap shrink-0"
+            >
+              Sign out
+            </button>
+          </div>
         </div>
 
         <form onSubmit={handleCompleteOnboarding} className="p-8 space-y-6">
@@ -205,11 +226,19 @@ export function OnboardingWizard() {
                   Administrators can elevate your role to District Pastor, Church Treasurer, or Mission Leadership after onboarding.
                 </div>
               </div>
-              <div className="flex justify-end pt-2">
+              <div className="flex items-center justify-between gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={handleBypassOnboarding}
+                  disabled={saving}
+                  className="px-4 py-2 text-xs font-medium rounded-lg border border-[var(--border-hairline)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] whitespace-nowrap shrink-0"
+                >
+                  Bypass Onboarding
+                </button>
                 <button
                   type="button"
                   onClick={() => setStep(2)}
-                  className="px-5 py-2.5 text-sm font-medium rounded-lg bg-[var(--accent-primary)] text-white hover:bg-[var(--accent-hover)] transition-colors"
+                  className="px-5 py-2.5 text-sm font-medium rounded-lg bg-[var(--accent-primary)] text-white hover:bg-[var(--accent-hover)] transition-colors whitespace-nowrap shrink-0"
                 >
                   Continue to Location Assignment
                 </button>

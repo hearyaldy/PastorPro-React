@@ -66,6 +66,7 @@ export function ResourcesSettingsPage() {
         fileType: 'Link / PDF',
         isActive: true,
         uploadedBy: profile.uid,
+        userId: profile.uid,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });

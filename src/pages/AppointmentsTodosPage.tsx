@@ -5,7 +5,6 @@ import {
   deleteDoc,
   doc,
   onSnapshot,
-  orderBy,
   query,
   serverTimestamp,
   updateDoc,
@@ -13,7 +12,7 @@ import {
 } from 'firebase/firestore';
 import { Check, Plus, Trash2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { db, handleFirestoreError, OperationType, reportListenerError } from '../lib/firebase';
 import { useToast } from '../components/Toast';
 import type { Appointment, TodoItem } from '../types';
 
@@ -47,17 +46,19 @@ export function AppointmentsTodosPage() {
         query(
           collection(db, 'appointments'),
           where('userId', '==', profile.uid),
-          orderBy('dateTime', 'asc'),
         ),
         (snap) => {
-          setAppointments(
-            snap.docs.map((d) => ({
+          const items = snap.docs
+            .map((d) => ({
               id: d.id,
               ...(d.data() as Omit<Appointment, 'id'>),
-            })),
-          );
+            }))
+            .sort((a, b) => String(a.dateTime || '').localeCompare(String(b.dateTime || '')));
+          setAppointments(items);
         },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'appointments'),
+        (err) => {
+          reportListenerError(err, OperationType.LIST, 'appointments');
+        },
       ),
       onSnapshot(
         query(
@@ -72,7 +73,9 @@ export function AppointmentsTodosPage() {
             })),
           );
         },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'todos'),
+        (err) => {
+          reportListenerError(err, OperationType.LIST, 'todos');
+        },
       ),
     ];
     return () => unsubs.forEach((u) => u());

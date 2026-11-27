@@ -199,10 +199,10 @@ export function WorkspaceShell({
         {!compact ? (
           <div className="min-w-0">
             <div className="text-base font-display font-semibold tracking-tight text-[var(--text-primary)] whitespace-nowrap">
-              Pastor Report
+              PastorPro
             </div>
             <div className="text-[11px] text-[var(--text-muted)] truncate max-w-[165px]">
-              {profile?.missionName || 'Sabah Adventist Mission'}
+              {profile?.missionName || 'Multi-Mission Workspace'}
             </div>
           </div>
         ) : (

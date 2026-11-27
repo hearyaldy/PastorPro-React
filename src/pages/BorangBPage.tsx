@@ -3,7 +3,6 @@ import {
   collection,
   doc,
   onSnapshot,
-  orderBy,
   query,
   serverTimestamp,
   setDoc,
@@ -11,7 +10,7 @@ import {
 } from 'firebase/firestore';
 import { Check, Printer, Send } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { db, handleFirestoreError, OperationType, reportListenerError } from '../lib/firebase';
 import { MONTHS, triggerPrintPdf } from '../lib/exportUtils';
 import { useToast } from '../components/Toast';
 import type { BorangBReport } from '../types';
@@ -99,17 +98,19 @@ export function BorangBPage() {
       query(
         collection(db, 'borang_b_reports'),
         where('userId', '==', profile.uid),
-        orderBy('year', 'desc'),
       ),
       (snap) => {
-        setHistory(
-          snap.docs.map((d) => ({
+        const items = snap.docs
+          .map((d) => ({
             id: d.id,
             ...(d.data() as Omit<BorangBReport, 'id'>),
-          })),
-        );
+          }))
+          .sort((a, b) => (b.year - a.year) || (b.month - a.month));
+        setHistory(items);
       },
-      (err) => handleFirestoreError(err, OperationType.LIST, 'borang_b_reports'),
+      (err) => {
+        reportListenerError(err, OperationType.LIST, 'borang_b_reports');
+      },
     );
     return () => unsub();
   }, [profile]);
@@ -151,12 +152,14 @@ export function BorangBPage() {
         }
         hydratedRef.current = true;
       },
-      (err) =>
-        handleFirestoreError(
+      (err) => {
+        hydratedRef.current = true;
+        reportListenerError(
           err,
           OperationType.GET,
           `borang_b_reports/${reportDocId}`,
-        ),
+        );
+      },
     );
     return () => unsub();
   }, [reportDocId]);

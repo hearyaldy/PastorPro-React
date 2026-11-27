@@ -16,9 +16,10 @@ import * as XLSX from 'xlsx';
 import { Check, Plus, Search, Trash2, Upload, XCircle } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useMission } from '../contexts/MissionContext';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { db, handleFirestoreError, OperationType, reportListenerError } from '../lib/firebase';
 import { useToast } from '../components/Toast';
 import {
+  normalizeUserRole,
   ROLE_META,
   type AdminActivityLog,
   type LocationRequest,
@@ -33,6 +34,7 @@ export function AdminStaffUsersPage() {
 
   const [tab, setTab] = useState<'users' | 'staff' | 'requests' | 'audit'>('users');
   const [users, setUsers] = useState<UserProfile[]>([]);
+  const [usersError, setUsersError] = useState<string | null>(null);
   const [requests, setRequests] = useState<LocationRequest[]>([]);
   const [auditLogs, setAuditLogs] = useState<AdminActivityLog[]>([]);
   const [search, setSearch] = useState('');
@@ -47,16 +49,34 @@ export function AdminStaffUsersPage() {
     if (!profile) return;
     const unsubs = [
       onSnapshot(
-        query(collection(db, 'users'), orderBy('displayName', 'asc')),
+        collection(db, 'users'),
         (snap) => {
-          setUsers(
-            snap.docs.map((d) => ({
-              ...(d.data() as UserProfile),
-              uid: d.id,
-            })),
-          );
+          const items = snap.docs
+            .map((d) => {
+              const raw = d.data() as Record<string, unknown>;
+              const userRole = normalizeUserRole(raw);
+              return {
+                ...(raw as unknown as UserProfile),
+                uid: d.id,
+                email: String(raw.email || ''),
+                displayName: String(raw.displayName || raw.name || raw.email || d.id),
+                userRole,
+                role: raw.role ? String(raw.role) : userRole,
+                roleTitle: raw.roleTitle ? String(raw.roleTitle) : ROLE_META[userRole].label,
+                level: typeof raw.level === 'number' ? raw.level : ROLE_META[userRole].level,
+                missionId: String(raw.missionId || raw.mission || ''),
+                districtId: String(raw.districtId || raw.district || ''),
+                isActive: raw.isActive !== false,
+                onboardingCompleted: Boolean(raw.onboardingCompleted),
+              };
+            })
+            .sort((a, b) => String(a.displayName || '').localeCompare(String(b.displayName || '')));
+          setUsers(items);
+          setUsersError(null);
         },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'users'),
+        (err) => {
+          setUsersError(reportListenerError(err, OperationType.LIST, 'users'));
+        },
       ),
       onSnapshot(
         query(collection(db, 'locationRequests'), orderBy('createdAt', 'desc')),
@@ -68,7 +88,9 @@ export function AdminStaffUsersPage() {
             })),
           );
         },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'locationRequests'),
+        (err) => {
+          reportListenerError(err, OperationType.LIST, 'locationRequests');
+        },
       ),
       onSnapshot(
         query(collection(db, 'admin_activity'), orderBy('createdAt', 'desc'), limit(50)),
@@ -80,7 +102,9 @@ export function AdminStaffUsersPage() {
             })),
           );
         },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'admin_activity'),
+        (err) => {
+          reportListenerError(err, OperationType.LIST, 'admin_activity');
+        },
       ),
     ];
     return () => unsubs.forEach((u) => u());
@@ -134,7 +158,8 @@ export function AdminStaffUsersPage() {
     try {
       const ref = await addDoc(collection(db, 'staff'), {
         missionId,
-        ...(dist ? { regionId: dist.regionId, districtId: dist.id } : {}),
+        mission: missionId,
+        ...(dist ? { regionId: dist.regionId, districtId: dist.id, district: dist.id } : {}),
         fullName: staffName.trim().slice(0, 120),
         position: staffPosition.trim().slice(0, 80),
         email: staffEmail.trim().slice(0, 200),
@@ -186,6 +211,7 @@ export function AdminStaffUsersPage() {
         const ref = doc(collection(db, 'staff'));
         batch.set(ref, {
           missionId,
+          mission: missionId,
           fullName: fullName.slice(0, 120),
           position: position.slice(0, 80),
           email: email.slice(0, 200),
@@ -274,6 +300,14 @@ export function AdminStaffUsersPage() {
       {/* USERS & ROLES */}
       {tab === 'users' && (
         <div className="border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] overflow-hidden">
+          {usersError && (
+            <div className="p-4 bg-red-50 dark:bg-red-950/30 border-b border-red-200 dark:border-red-900 text-xs text-red-800 dark:text-red-200 space-y-1">
+              <div className="font-semibold">Unable to load user directory from Firestore ({usersError})</div>
+              <div>
+                Ensure your account has <span className="font-mono-tabular">isAdmin: true</span> (or <span className="font-mono-tabular">userRole: &quot;superAdmin&quot;</span>) in <span className="font-mono-tabular">users</span>, or publish the updated <span className="font-mono-tabular">firestore.rules</span> on <span className="font-mono-tabular">pastor-report-e4c52</span>.
+              </div>
+            </div>
+          )}
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse text-sm">
               <thead>

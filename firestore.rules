@@ -44,8 +44,8 @@ service cloud.firestore {
     function isSuperAdmin() {
       return isBootstrappedSuperAdmin() || (
         isVerified() && userDocExists() && (
-          callerDoc().userRole == 'super_admin' ||
-          callerDoc().get('role', '') == 'super_admin'
+          callerDoc().get('userRole', '') in ['super_admin', 'superadmin', 'superAdmin'] ||
+          callerDoc().get('role', '') in ['super_admin', 'superadmin', 'superAdmin', 'Super Admin']
         )
       );
     }
@@ -53,8 +53,8 @@ service cloud.firestore {
     function isAdmin() {
       return isSuperAdmin() || (
         isVerified() && userDocExists() && (
-          callerDoc().userRole == 'admin' ||
-          callerDoc().get('role', '') == 'admin' ||
+          callerDoc().get('userRole', '') == 'admin' ||
+          callerDoc().get('role', '') in ['admin', 'Admin'] ||
           callerDoc().get('isAdmin', false) == true
         )
       );
@@ -63,31 +63,39 @@ service cloud.firestore {
     function isMissionAdmin() {
       return isAdmin() || (
         isVerified() && userDocExists() && (
-          callerDoc().userRole == 'mission_admin' ||
-          callerDoc().get('role', '') == 'mission_admin'
+          callerDoc().get('userRole', '') in ['mission_admin', 'missionAdmin', 'missionPresident'] ||
+          callerDoc().get('role', '') in ['mission_admin', 'missionAdmin', 'Mission Admin', 'Mission President']
         )
       );
+    }
+
+    function callerMissionId() {
+      return callerDoc().get('missionId', callerDoc().get('mission', ''));
+    }
+
+    function callerDistrictId() {
+      return callerDoc().get('districtId', callerDoc().get('district', ''));
     }
 
     function isMissionAdminFor(missionId) {
       return isAdmin() || (
         isVerified() && userDocExists() &&
-        callerDoc().userRole == 'mission_admin' &&
-        callerDoc().get('missionId', '') == missionId
+        callerDoc().get('userRole', '') in ['mission_admin', 'missionAdmin', 'missionPresident'] &&
+        callerMissionId() == missionId
       );
     }
 
     function isMissionLeadership() {
       return isMissionAdmin() || (
         isVerified() && userDocExists() &&
-        callerDoc().userRole in ['ministerial_secretary', 'director', 'officer']
+        callerDoc().get('userRole', '') in ['ministerial_secretary', 'ministerialSecretary', 'director', 'officer']
       );
     }
 
     function isDistrictPastorFor(districtId) {
       return isVerified() && userDocExists() && (
-        callerDoc().userRole == 'district_pastor' &&
-        callerDoc().get('districtId', '') == districtId
+        callerDoc().get('userRole', '') in ['district_pastor', 'districtPastor'] &&
+        callerDistrictId() == districtId
       ) || (
         isVerified() &&
         exists(/databases/$(database)/documents/districts/$(districtId)) &&
@@ -97,7 +105,7 @@ service cloud.firestore {
 
     function isChurchTreasurerFor(churchId) {
       return isVerified() && userDocExists() && (
-        callerDoc().userRole == 'church_treasurer' &&
+        callerDoc().get('userRole', '') in ['church_treasurer', 'churchTreasurer'] &&
         callerDoc().get('churchId', '') == churchId
       ) || (
         isVerified() &&
@@ -109,8 +117,8 @@ service cloud.firestore {
     function isEditorInMission(missionId) {
       return isMissionAdminFor(missionId) || (
         isVerified() && userDocExists() &&
-        callerDoc().userRole == 'editor' &&
-        callerDoc().get('missionId', '') == missionId
+        callerDoc().get('userRole', '') == 'editor' &&
+        callerMissionId() == missionId
       );
     }
 
@@ -133,8 +141,8 @@ service cloud.firestore {
       return data.keys().hasAll(['uid', 'email', 'displayName', 'userRole', 'level', 'isActive', 'onboardingCompleted', 'createdAt', 'updatedAt']) &&
         data.keys().hasOnly([
           'uid', 'email', 'displayName', 'photoURL', 'phone', 'userRole', 'role', 'roleTitle',
-          'isAdmin', 'level', 'unionId', 'unionName', 'missionId', 'missionName',
-          'regionId', 'regionName', 'districtId', 'districtName', 'churchId', 'churchName',
+          'isAdmin', 'level', 'unionId', 'unionName', 'missionId', 'mission', 'missionName',
+          'regionId', 'regionName', 'districtId', 'district', 'districtName', 'churchId', 'churchName',
           'isPremium', 'isActive', 'approvalStatus', 'approvedBy', 'approvalNote',
           'onboardingCompleted', 'createdAt', 'updatedAt'
         ]) &&
@@ -143,7 +151,7 @@ service cloud.firestore {
         data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120 &&
         validOptStr(data, 'photoURL', 500) &&
         validOptStr(data, 'phone', 40) &&
-        data.userRole in ['super_admin', 'admin', 'mission_admin', 'ministerial_secretary', 'director', 'officer', 'editor', 'district_pastor', 'church_treasurer', 'user'] &&
+        data.userRole in ['super_admin', 'superAdmin', 'admin', 'mission_admin', 'missionAdmin', 'missionPresident', 'ministerial_secretary', 'ministerialSecretary', 'director', 'officer', 'editor', 'district_pastor', 'districtPastor', 'church_treasurer', 'churchTreasurer', 'user'] &&
         validOptStr(data, 'role', 64) &&
         validOptStr(data, 'roleTitle', 80) &&
         validOptBool(data, 'isAdmin') &&
@@ -151,10 +159,12 @@ service cloud.firestore {
         validOptStr(data, 'unionId', 128) &&
         validOptStr(data, 'unionName', 120) &&
         validOptStr(data, 'missionId', 128) &&
+        validOptStr(data, 'mission', 128) &&
         validOptStr(data, 'missionName', 120) &&
         validOptStr(data, 'regionId', 128) &&
         validOptStr(data, 'regionName', 120) &&
         validOptStr(data, 'districtId', 128) &&
+        validOptStr(data, 'district', 128) &&
         validOptStr(data, 'districtName', 120) &&
         validOptStr(data, 'churchId', 128) &&
         validOptStr(data, 'churchName', 120) &&
@@ -248,10 +258,12 @@ service cloud.firestore {
 
     function isValidStaff(data) {
       return data.keys().hasAll(['missionId', 'fullName', 'position', 'status', 'isActive', 'createdAt', 'updatedAt']) &&
-        data.keys().hasOnly(['missionId', 'regionId', 'districtId', 'fullName', 'position', 'email', 'phone', 'status', 'isActive', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['missionId', 'mission', 'regionId', 'districtId', 'district', 'fullName', 'position', 'email', 'phone', 'status', 'isActive', 'createdAt', 'updatedAt']) &&
         isValidId(data.missionId) &&
+        validOptStr(data, 'mission', 128) &&
         validOptStr(data, 'regionId', 128) &&
         validOptStr(data, 'districtId', 128) &&
+        validOptStr(data, 'district', 128) &&
         data.fullName is string && data.fullName.size() >= 1 && data.fullName.size() <= 120 &&
         data.position is string && data.position.size() >= 1 && data.position.size() <= 80 &&
         validOptStr(data, 'email', 200) &&
@@ -481,7 +493,7 @@ service cloud.firestore {
 
     function isValidResource(data) {
       return data.keys().hasAll(['missionId', 'title', 'category', 'url', 'isActive', 'uploadedBy', 'createdAt', 'updatedAt']) &&
-        data.keys().hasOnly(['missionId', 'title', 'category', 'description', 'url', 'fileType', 'isActive', 'uploadedBy', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['missionId', 'title', 'category', 'description', 'url', 'fileType', 'isActive', 'uploadedBy', 'userId', 'createdAt', 'updatedAt']) &&
         isValidId(data.missionId) &&
         data.title is string && data.title.size() >= 1 && data.title.size() <= 160 &&
         data.category is string && data.category.size() >= 1 && data.category.size() <= 64 &&
@@ -490,14 +502,16 @@ service cloud.firestore {
         validOptStr(data, 'fileType', 32) &&
         data.isActive is bool &&
         isValidId(data.uploadedBy) &&
+        (!('userId' in data) || data.userId == data.uploadedBy) &&
         data.createdAt is timestamp &&
         data.updatedAt is timestamp;
     }
 
     function isValidLocationRequest(data) {
       return data.keys().hasAll(['userId', 'userName', 'userEmail', 'churchName', 'status', 'createdAt', 'updatedAt']) &&
-        data.keys().hasOnly(['userId', 'userName', 'userEmail', 'missionName', 'regionName', 'districtName', 'churchName', 'notes', 'status', 'reviewedBy', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['userId', 'requestedBy', 'userName', 'userEmail', 'missionName', 'regionName', 'districtName', 'churchName', 'notes', 'status', 'reviewedBy', 'createdAt', 'updatedAt']) &&
         isValidId(data.userId) &&
+        (!('requestedBy' in data) || data.requestedBy == data.userId) &&
         data.userName is string && data.userName.size() >= 1 && data.userName.size() <= 120 &&
         data.userEmail is string && data.userEmail.size() >= 3 && data.userEmail.size() <= 200 &&
         validOptStr(data, 'missionName', 120) &&
@@ -811,7 +825,7 @@ service cloud.firestore {
     }
 
     // Quarterly Department Reports (Deterministic ID: {churchId}_{year}_Q{quarter}_{department})
-    match /quarterly_department_report/{reportId} {
+    match /quarterly_department_reports/{reportId} {
       allow get: if isValidId(reportId) && isSignedIn() && (
         existing().submittedBy == request.auth.uid ||
         isDistrictPastorFor(existing().districtId) ||

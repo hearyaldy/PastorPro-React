@@ -116,11 +116,41 @@ export interface RoleCapabilities {
   isReadOnlyOfficer: boolean;
 }
 
-export function normalizeUserRole(raw: Record<string, unknown>): UserRole {
-  const candidate = String(raw.userRole || raw.role || '').toLowerCase().trim();
+function resolveSingleRoleCandidate(value: unknown): UserRole | null {
+  const candidate = String(value || '').toLowerCase().trim();
+  if (!candidate) return null;
   if (candidate in ROLE_META) {
     return candidate as UserRole;
   }
+  const compact = candidate.replace(/[\s_-]+/g, '');
+  if (compact === 'superadmin') return 'super_admin';
+  if (compact === 'missionadmin' || compact === 'missionpresident') return 'mission_admin';
+  if (compact === 'ministerialsecretary') return 'ministerial_secretary';
+  if (compact === 'districtpastor') return 'district_pastor';
+  if (compact === 'churchtreasurer') return 'church_treasurer';
+  return null;
+}
+
+export function normalizeUserRole(raw: Record<string, unknown>): UserRole {
+  if (raw.isSuperAdmin === true || raw.superAdmin === true) {
+    return 'super_admin';
+  }
+
+  const candidates = [raw.userRole, raw.role, raw.userType, raw.accountType]
+    .map(resolveSingleRoleCandidate)
+    .filter((r): r is UserRole => r !== null);
+
+  if (candidates.includes('super_admin')) {
+    return 'super_admin';
+  }
+  const highestNonDefault = candidates.find((r) => r !== 'user');
+  if (highestNonDefault) {
+    return highestNonDefault;
+  }
+  if (candidates.length > 0) {
+    return candidates[0];
+  }
+
   const title = String(raw.roleTitle || '').toLowerCase();
   if (title.includes('super')) return 'super_admin';
   if (raw.isAdmin === true || title.includes('admin')) return 'admin';

@@ -5,7 +5,6 @@ import {
   deleteDoc,
   doc,
   onSnapshot,
-  orderBy,
   query,
   serverTimestamp,
   where,
@@ -13,7 +12,7 @@ import {
 import { ChevronLeft, ChevronRight, Globe, Plus, Trash2, X } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useMission } from '../contexts/MissionContext';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { db, handleFirestoreError, OperationType, reportListenerError } from '../lib/firebase';
 import { formatIsoDate, MONTHS } from '../lib/exportUtils';
 import { useToast } from '../components/Toast';
 import type { Appointment, CalendarEvent } from '../types';
@@ -45,33 +44,37 @@ export function CalendarEventsPage() {
         query(
           collection(db, 'events'),
           where('userId', '==', profile.uid),
-          orderBy('startDate', 'asc'),
         ),
         (snap) => {
-          setLocalEvents(
-            snap.docs.map((d) => ({
+          const items = snap.docs
+            .map((d) => ({
               id: d.id,
               ...(d.data() as Omit<CalendarEvent, 'id'>),
-            })),
-          );
+            }))
+            .sort((a, b) => String(a.startDate || '').localeCompare(String(b.startDate || '')));
+          setLocalEvents(items);
         },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'events'),
+        (err) => {
+          reportListenerError(err, OperationType.LIST, 'events');
+        },
       ),
       onSnapshot(
         query(
           collection(db, 'appointments'),
           where('userId', '==', profile.uid),
-          orderBy('dateTime', 'asc'),
         ),
         (snap) => {
-          setAppointments(
-            snap.docs.map((d) => ({
+          const items = snap.docs
+            .map((d) => ({
               id: d.id,
               ...(d.data() as Omit<Appointment, 'id'>),
-            })),
-          );
+            }))
+            .sort((a, b) => String(a.dateTime || '').localeCompare(String(b.dateTime || '')));
+          setAppointments(items);
         },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'appointments'),
+        (err) => {
+          reportListenerError(err, OperationType.LIST, 'appointments');
+        },
       ),
     ];
     return () => unsubs.forEach((u) => u());

@@ -51,7 +51,7 @@ const ROUTE_META: Record<
 const SIDEBAR_MODE_KEY = 'pastor_report_sidebar_compact';
 
 function WorkspaceRouter() {
-  const { firebaseUser, profile, loading, signOut } = useAuth();
+  const { firebaseUser, profile, loading, authError, signOut } = useAuth();
   const [route, setRoute] = useState<NavRouteId>('overview');
   const [sidebarCompact, setSidebarCompact] = useState<boolean>(() => {
     try {
@@ -86,7 +86,7 @@ function WorkspaceRouter() {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[var(--bg-canvas)] text-[var(--text-secondary)] text-sm">
-        Connecting to Pastor Report workspace...
+        Connecting to PastorPro workspace...
       </div>
     );
   }
@@ -95,7 +95,9 @@ function WorkspaceRouter() {
     return <AuthGate />;
   }
 
-  if (profile.approvalStatus === 'pending') {
+  const isSuperAdmin = profile.userRole === 'super_admin';
+
+  if (!isSuperAdmin && profile.approvalStatus === 'pending') {
     return (
       <div className="min-h-screen flex items-center justify-center p-6 bg-[var(--bg-canvas)] text-[var(--text-primary)]">
         <div className="max-w-lg w-full rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-8 space-y-5">
@@ -127,7 +129,7 @@ function WorkspaceRouter() {
     );
   }
 
-  if (profile.approvalStatus === 'rejected' || !profile.isActive) {
+  if (!isSuperAdmin && (profile.approvalStatus === 'rejected' || !profile.isActive)) {
     return (
       <div className="min-h-screen flex items-center justify-center p-6 bg-[var(--bg-canvas)] text-[var(--text-primary)]">
         <div className="max-w-md w-full rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-8 space-y-4">
@@ -159,7 +161,12 @@ function WorkspaceRouter() {
     );
   }
 
-  if (!profile.onboardingCompleted) {
+  const bypassOnboarding =
+    isSuperAdmin ||
+    profile.userRole === 'admin' ||
+    Boolean(profile.isAdmin);
+
+  if (!bypassOnboarding && !profile.onboardingCompleted) {
     return <OnboardingWizard />;
   }
 
@@ -174,6 +181,11 @@ function WorkspaceRouter() {
       sidebarCompact={sidebarCompact}
       onToggleSidebarCompact={() => handleSetSidebarCompact(!sidebarCompact)}
     >
+      {authError && (
+        <div className="mb-6 p-3.5 rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 text-xs text-amber-900 dark:text-amber-200">
+          {authError}
+        </div>
+      )}
       {route === 'overview' && <DashboardOverview onNavigate={setRoute} />}
       {route === 'my-mission' && <MyMissionPage onNavigate={setRoute} />}
       {route === 'my-ministry' && <MyMinistryPage onNavigate={setRoute} />}

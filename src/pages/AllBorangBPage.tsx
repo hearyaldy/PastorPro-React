@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { collection, onSnapshot, orderBy, query } from 'firebase/firestore';
+import { collection, onSnapshot } from 'firebase/firestore';
 import { CheckCircle2, Clock, Download, Eye, FileJson, Printer, Search, X } from 'lucide-react';
 import { useMission } from '../contexts/MissionContext';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { db, OperationType, reportListenerError } from '../lib/firebase';
 import {
   exportToCsv,
   exportToExcel,
@@ -38,24 +38,21 @@ export function AllBorangBPage() {
 
   useEffect(() => {
     setLoading(true);
-    const q = query(
-      collection(db, 'borang_b_reports'),
-      orderBy('year', 'desc'),
-    );
     const unsub = onSnapshot(
-      q,
+      collection(db, 'borang_b_reports'),
       (snap) => {
-        setReports(
-          snap.docs.map((d) => ({
+        const items = snap.docs
+          .map((d) => ({
             id: d.id,
             ...(d.data() as Omit<BorangBReport, 'id'>),
-          })),
-        );
+          }))
+          .sort((a, b) => (b.year - a.year) || (b.month - a.month));
+        setReports(items);
         setLoading(false);
       },
       (err) => {
         setLoading(false);
-        handleFirestoreError(err, OperationType.LIST, 'borang_b_reports');
+        reportListenerError(err, OperationType.LIST, 'borang_b_reports');
       },
     );
     return () => unsub();

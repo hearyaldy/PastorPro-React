@@ -72,6 +72,11 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
 
     setLoadingHierarchy(true);
 
+    const safeListenError = (col: string, err: unknown, isMissionLoad = false) => {
+      console.warn(`MissionContext listener warning (${col}):`, err);
+      if (isMissionLoad) setLoadingHierarchy(false);
+    };
+
     const unsubs = [
       onSnapshot(
         query(collection(db, 'unions'), orderBy('name', 'asc')),
@@ -80,7 +85,7 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
             snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Union, 'id'>) })),
           );
         },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'unions'),
+        (err) => safeListenError('unions', err),
       ),
       onSnapshot(
         query(collection(db, 'missions'), orderBy('name', 'asc')),
@@ -90,10 +95,7 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
           );
           setLoadingHierarchy(false);
         },
-        (err) => {
-          setLoadingHierarchy(false);
-          handleFirestoreError(err, OperationType.LIST, 'missions');
-        },
+        (err) => safeListenError('missions', err, true),
       ),
       onSnapshot(
         query(collection(db, 'regions'), orderBy('name', 'asc')),
@@ -102,7 +104,7 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
             snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Region, 'id'>) })),
           );
         },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'regions'),
+        (err) => safeListenError('regions', err),
       ),
       onSnapshot(
         query(collection(db, 'districts'), orderBy('name', 'asc')),
@@ -111,7 +113,7 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
             snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<District, 'id'>) })),
           );
         },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'districts'),
+        (err) => safeListenError('districts', err),
       ),
       onSnapshot(
         query(collection(db, 'churches'), orderBy('name', 'asc')),
@@ -120,7 +122,7 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
             snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Church, 'id'>) })),
           );
         },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'churches'),
+        (err) => safeListenError('churches', err),
       ),
       onSnapshot(
         query(collection(db, 'departments'), orderBy('name', 'asc')),
@@ -129,7 +131,7 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
             snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Department, 'id'>) })),
           );
         },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'departments'),
+        (err) => safeListenError('departments', err),
       ),
       onSnapshot(
         query(collection(db, 'staff'), orderBy('fullName', 'asc')),
@@ -138,7 +140,7 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
             snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<StaffMember, 'id'>) })),
           );
         },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'staff'),
+        (err) => safeListenError('staff', err),
       ),
       onSnapshot(
         query(collection(db, 'global_events'), orderBy('startDate', 'asc')),
@@ -147,7 +149,7 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
             snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<GlobalEvent, 'id'>) })),
           );
         },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'global_events'),
+        (err) => safeListenError('global_events', err),
       ),
       onSnapshot(
         query(collection(db, 'resources'), orderBy('title', 'asc')),
@@ -156,7 +158,7 @@ export function MissionProvider({ children }: { children: React.ReactNode }) {
             snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<MissionResource, 'id'>) })),
           );
         },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'resources'),
+        (err) => safeListenError('resources', err),
       ),
     ];
 

@@ -1,12 +1,12 @@
 {
-  "projectId": "hc-petty-cash-report",
-  "appId": "1:380309314630:web:6573d3f07a9ab32b2e7e47",
-  "apiKey": "AIzaSyBBbD9nKGBI7_rjj_Y_v2zHUC68_8GdZ90",
-  "authDomain": "hc-petty-cash-report.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-aa2bc29a-769f-4129-8a0c-2830fa296c2d",
-  "storageBucket": "hc-petty-cash-report.firebasestorage.app",
-  "messagingSenderId": "380309314630",
-  "measurementId": "",
-  "oAuthClientId": "380309314630-hhd7pann6sj8c56iunqjk8gubuput1rm.apps.googleusercontent.com",
+  "projectId": "pastor-report-e4c52",
+  "appId": "1:695678872591:web:fdd91a2e9371b2b9f4c77a",
+  "apiKey": "AIzaSyCVxdhoGZ_NM9xF4jTMKJegVcGb2qRu7o0",
+  "authDomain": "pastor-report-e4c52.firebaseapp.com",
+  "firestoreDatabaseId": "(default)",
+  "storageBucket": "pastor-report-e4c52.firebasestorage.app",
+  "messagingSenderId": "695678872591",
+  "measurementId": "G-GSCLWPJXFL",
+  "oAuthClientId": "",
   "recaptchaSiteKey": ""
 }

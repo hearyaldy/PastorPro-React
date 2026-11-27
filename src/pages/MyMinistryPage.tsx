@@ -5,7 +5,6 @@ import {
   deleteDoc,
   doc,
   onSnapshot,
-  orderBy,
   query,
   serverTimestamp,
   updateDoc,
@@ -28,7 +27,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useMission } from '../contexts/MissionContext';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { db, handleFirestoreError, OperationType, reportListenerError } from '../lib/firebase';
 import { MONTHS } from '../lib/exportUtils';
 import { useToast } from '../components/Toast';
 import type { NavRouteId } from '../components/WorkspaceShell';
@@ -92,57 +91,57 @@ export function MyMinistryPage({
         query(
           collection(db, 'ministry_team'),
           where('userId', '==', profile.uid),
-          orderBy('fullName', 'asc'),
         ),
         (snap) => {
-          setTeam(
-            snap.docs.map((d) => ({
+          const items = snap.docs
+            .map((d) => ({
               id: d.id,
               ...(d.data() as Omit<MinistryTeamMember, 'id'>),
-            })),
-          );
+            }))
+            .sort((a, b) => String(a.fullName || '').localeCompare(String(b.fullName || '')));
+          setTeam(items);
           setLoadingTeam(false);
         },
         (err) => {
           setLoadingTeam(false);
-          handleFirestoreError(err, OperationType.LIST, 'ministry_team');
+          reportListenerError(err, OperationType.LIST, 'ministry_team');
         },
       ),
       onSnapshot(
         query(
           collection(db, 'activities'),
           where('userId', '==', profile.uid),
-          orderBy('date', 'desc'),
         ),
         (snap) => {
-          setRecentActivities(
-            snap.docs.map((d) => ({
+          const items = snap.docs
+            .map((d) => ({
               id: d.id,
               ...(d.data() as Omit<PastoralActivity, 'id'>),
-            })),
-          );
+            }))
+            .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+          setRecentActivities(items);
         },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'activities'),
+        (err) => {
+          reportListenerError(err, OperationType.LIST, 'activities');
+        },
       ),
       onSnapshot(
         query(
           collection(db, 'borang_b_reports'),
           where('userId', '==', profile.uid),
-          where('year', '==', currentYear),
-          where('month', '==', currentMonth),
         ),
         (snap) => {
-          if (snap.empty) {
-            setCurrentBorangB(null);
-          } else {
-            const docSnap = snap.docs[0];
-            setCurrentBorangB({
-              id: docSnap.id,
-              ...(docSnap.data() as Omit<BorangBReport, 'id'>),
-            });
-          }
+          const match = snap.docs
+            .map((d) => ({
+              id: d.id,
+              ...(d.data() as Omit<BorangBReport, 'id'>),
+            }))
+            .find((r) => r.year === currentYear && r.month === currentMonth);
+          setCurrentBorangB(match || null);
         },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'borang_b_reports'),
+        (err) => {
+          reportListenerError(err, OperationType.LIST, 'borang_b_reports');
+        },
       ),
     ];
     return () => unsubs.forEach((u) => u());
@@ -292,7 +291,7 @@ export function MyMinistryPage({
       <div className="border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] p-6 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div className="space-y-1">
           <div className="text-xs text-[var(--text-muted)]">
-            {profile?.missionName || 'Sabah Adventist Mission'} ·{' '}
+            {profile?.missionName || 'Mission Unassigned'} ·{' '}
             {profile?.regionName || 'Region Unassigned'}
           </div>
           <h2 className="text-xl font-display font-semibold tracking-tight">

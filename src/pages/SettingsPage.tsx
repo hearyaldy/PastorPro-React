@@ -3,7 +3,7 @@ import { doc, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore';
 import { Check, Info, LogOut, Moon, ShieldCheck, Sun } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { LIGHT_THEME_PRESETS, useTheme } from '../contexts/ThemeContext';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { db, handleFirestoreError, OperationType, reportListenerError } from '../lib/firebase';
 import { useToast } from '../components/Toast';
 
 type FontScale = 'compact' | 'standard' | 'comfortable';
@@ -75,7 +75,9 @@ export function SettingsPage({
           setMaintenanceMode(data.maintenanceMode);
         }
       },
-      (err) => handleFirestoreError(err, OperationType.GET, 'settings/emailDomains'),
+      (err) => {
+        reportListenerError(err, OperationType.GET, 'settings/emailDomains');
+      },
     );
     return () => unsub();
   }, [profile]);
@@ -339,10 +341,10 @@ export function SettingsPage({
         <div className="border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] p-6 space-y-3">
           <div className="flex items-center gap-2">
             <Info className="w-4 h-4 text-[var(--accent-primary)]" />
-            <h3 className="text-sm font-semibold">About Pastor Report</h3>
+            <h3 className="text-sm font-semibold">About PastorPro</h3>
           </div>
           <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
-            Ministerial, financial, and departmental reporting platform supporting Sabah Adventist Mission and Malaysia Union Mission leadership.
+            Multi-mission ministerial, financial, and departmental reporting platform supporting Unions, Missions, Regions, Districts, and local Churches.
           </p>
           <div className="text-xs text-[var(--text-muted)] space-y-1 pt-1">
             <div>Version 3.2.0 · Editorial React Workspace</div>

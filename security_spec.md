@@ -8,7 +8,7 @@
    - `unions` and `missions` are readable by signed-in users and writable only by verified `admin` / `super_admin` (`delete` reserved for `super_admin`).
    - Personal records (`activities`, `appointments`, `todos`, `events`, `ministry_team`, `borang_b_reports`, `locationRequests`) belong strictly to `userId == request.auth.uid` (with read access on `borang_b_reports` for Ministerial Secretary / Director / Officer / Admin / Super Admin).
    - `financial_reports` and `fam_data` writes require either an Admin/Mission Admin or a verified Church Treasurer assigned to `churchId` (verified via `get(/databases/$(database)/documents/churches/$(churchId))` or matching user `churchId`).
-   - `quarterly_department_report` writes require either an Admin/Mission Admin or a District Pastor assigned to `districtId` (verified via `districts/{districtId}` or matching user `districtId`), using deterministic document ID `{churchId}_{year}_Q{quarter}_{department}`.
+   - `quarterly_department_reports` writes require either an Admin/Mission Admin or a District Pastor assigned to `districtId` (verified via `districts/{districtId}` or matching user `districtId`), using deterministic document ID `{churchId}_{year}_Q{quarter}_{department}`.
 4. **Immutable Audit & Temporal Integrity**: `createdAt == request.time` on creation; `createdAt` and original owner IDs cannot be altered on update; `updatedAt == request.time` on update. `admin_activity` logs are append-only for admins and immutable/non-deletable.
 5. **Path & Payload Bounds**: Every document ID matches `^[a-zA-Z0-9_-]+$` (`<= 128` chars), every string has strict `.size()` bounds, and every create/update checks exact `keys().hasAll(...)` / `keys().hasOnly(...)` or `affectedKeys().hasOnly(...)`.
 
@@ -21,7 +21,7 @@
 5. **Cross-User PII Read (`users/{otherUid}`)**: Standard user calling `get` or `list` on another user's document -> MUST be rejected.
 6. **Cross-Pastor Borang B Tampering (`borang_b_reports/{id}`)**: User A trying to create or update a Borang B with `userId: "user_b"` -> MUST be rejected.
 7. **Cross-Church Financial Report Forgery (`financial_reports/{id}`)**: Treasurer of Church A submitting or editing a financial report for Church B -> MUST be rejected.
-8. **Cross-District Quarterly Report Forgery (`quarterly_department_report/{id}`)**: District Pastor of District A writing a report for District B -> MUST be rejected.
+8. **Cross-District Quarterly Report Forgery (`quarterly_department_reports/{id}`)**: District Pastor of District A writing a report for District B -> MUST be rejected.
 9. **ID Poisoning (`churches/{1500_char_junk_id}`)**: Creating a document with an oversized or special-character ID (`../admin`) -> MUST be rejected by `isValidId()`.
 10. **Denial-of-Wallet Oversized String (`activities/{id}`)**: Creating an activity with `notes` of 100,000 characters -> MUST be rejected by `.size() <= 2000`.
 11. **Timestamp Forgery (`borang_b_reports/{id}`)**: Submitting `createdAt` backdated to `2020-01-01` instead of `request.time` -> MUST be rejected.

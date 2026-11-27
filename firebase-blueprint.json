@@ -516,7 +516,7 @@
     "/ministry_team/{memberId}": { "schema": { "$ref": "#/entities/MinistryTeamMember" }, "description": "Local church elders and pastoral ministry team members" },
     "/financial_reports/{reportId}": { "schema": { "$ref": "#/entities/FinancialReport" }, "description": "Monthly church financial reports" },
     "/fam_data/{famId}": { "schema": { "$ref": "#/entities/FamData" }, "description": "1:1 FAM breakdown linked to financial reports" },
-    "/quarterly_department_report/{reportId}": { "schema": { "$ref": "#/entities/QuarterlyDepartmentReport" }, "description": "Quarterly Kanak-Kanak, Penatalayanan, SSPM, and Wanita reports" },
+    "/quarterly_department_reports/{reportId}": { "schema": { "$ref": "#/entities/QuarterlyDepartmentReport" }, "description": "Quarterly Kanak-Kanak, Penatalayanan, SSPM, and Wanita reports" },
     "/borang_b_reports/{reportId}": { "schema": { "$ref": "#/entities/BorangBReport" }, "description": "Monthly ministerial pastoral reports (Borang B)" },
     "/activities/{activityId}": { "schema": { "$ref": "#/entities/Activity" }, "description": "Pastoral activity log entries" },
     "/appointments/{appointmentId}": { "schema": { "$ref": "#/entities/Appointment" }, "description": "Pastoral appointment records" },

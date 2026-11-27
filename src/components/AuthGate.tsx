@@ -1,14 +1,27 @@
-import { useState } from 'react';
-import { ArrowRight, BookOpen, CalendarDays, FileSpreadsheet, ShieldCheck, Sun, Moon } from 'lucide-react';
+import React, { useState } from 'react';
+import {
+  ArrowRight,
+  BookOpen,
+  CalendarDays,
+  FileSpreadsheet,
+  Lock,
+  Mail,
+  Moon,
+  ShieldCheck,
+  Sun,
+} from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { LIGHT_THEME_PRESETS, useTheme } from '../contexts/ThemeContext';
 
 export function AuthGate() {
-  const { signInWithGoogle, authError, connectionOk } = useAuth();
+  const { signInWithGoogle, signInWithEmail, authError, connectionOk } = useAuth();
   const { theme, lightTheme, toggleTheme, setLightTheme } = useTheme();
   const [signingIn, setSigningIn] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [emailSubmitting, setEmailSubmitting] = useState(false);
 
-  const handleSignIn = async () => {
+  const handleGoogleSignIn = async () => {
     setSigningIn(true);
     try {
       await signInWithGoogle();
@@ -19,11 +32,29 @@ export function AuthGate() {
     }
   };
 
+  const handleEmailSignIn = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email.trim() || !password) return;
+    setEmailSubmitting(true);
+    try {
+      await signInWithEmail(email, password);
+    } catch {
+      // error is captured in authError
+    } finally {
+      setEmailSubmitting(false);
+    }
+  };
+
+  const currentHost =
+    typeof window !== 'undefined' ? window.location.hostname : '';
+  const isUnauthorizedDomain =
+    Boolean(authError) && authError!.includes('unauthorized-domain');
+
   return (
     <div className="min-h-screen bg-[var(--bg-canvas)] text-[var(--text-primary)] flex flex-col">
       <header className="flex items-center justify-between gap-6 px-6 md:px-10 py-4 border-b border-[var(--border-hairline)] bg-[var(--bg-header)]">
         <div className="text-lg font-display font-semibold tracking-tight whitespace-nowrap shrink-0">
-          Pastor Report
+          PastorPro
         </div>
         <div className="flex items-center gap-3 shrink-0">
           <div className="hidden sm:flex items-center gap-1.5 pr-1">
@@ -58,7 +89,7 @@ export function AuthGate() {
           </button>
           <button
             type="button"
-            onClick={handleSignIn}
+            onClick={handleGoogleSignIn}
             disabled={signingIn}
             className="px-4 py-2 text-sm font-medium rounded-lg bg-[var(--accent-primary)] text-white hover:bg-[var(--accent-hover)] transition-colors whitespace-nowrap shrink-0 disabled:opacity-60"
           >
@@ -67,16 +98,16 @@ export function AuthGate() {
         </div>
       </header>
 
-      <main className="flex-1 max-w-6xl w-full mx-auto px-6 md:px-10 py-14 grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
+      <main className="flex-1 max-w-6xl w-full mx-auto px-6 md:px-10 py-12 grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
         <section className="lg:col-span-7 space-y-6">
           <div className="text-xs font-medium text-[var(--text-muted)] tracking-wide">
-            Sabah Adventist Mission · Ministerial & Church Reporting Platform
+            PastorPro · Multi-Mission Ministerial & Church Reporting Platform
           </div>
           <h1 className="text-3xl md:text-5xl font-display font-semibold tracking-tight leading-tight text-[var(--text-primary)]">
             Unified pastoral ledgers, monthly Borang B, and mission governance.
           </h1>
           <p className="text-base text-[var(--text-secondary)] leading-relaxed max-w-2xl">
-            Designed for pastors, district leaders, church treasurers, and mission officers across Sabah. Log field ministry, compile financial FAM breakdowns, and review quarterly departmental reports in one structured workspace.
+            Built for pastors, district leaders, church treasurers, and officers across Unions and Missions. Log field ministry, compile financial FAM breakdowns, and review quarterly departmental reports in one structured workspace.
           </p>
 
           {!connectionOk && (
@@ -86,24 +117,65 @@ export function AuthGate() {
           )}
 
           {authError && (
-            <div className="p-4 rounded-lg border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/30 text-sm text-red-800 dark:text-red-200">
-              {authError}
+            <div className="p-4 rounded-lg border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/30 text-sm text-red-800 dark:text-red-200 space-y-1.5">
+              <div>{authError}</div>
+              {isUnauthorizedDomain && currentHost && (
+                <div className="text-xs leading-relaxed">
+                  Add <span className="font-mono-tabular font-semibold">{currentHost}</span> under Firebase Console → Authentication → Settings → Authorized domains, or sign in with your Email & Password account below.
+                </div>
+              )}
             </div>
           )}
 
-          <div className="pt-2 flex flex-wrap items-center gap-4">
+          {/* Primary Google Sign-In + Email/Password Sign-In Card */}
+          <div className="border border-[var(--border-hairline)] rounded-xl bg-[var(--bg-surface)] p-5 space-y-4 max-w-md">
             <button
               type="button"
-              onClick={handleSignIn}
+              onClick={handleGoogleSignIn}
               disabled={signingIn}
-              className="inline-flex items-center gap-2.5 px-6 py-3 rounded-lg bg-[var(--accent-primary)] text-white text-sm font-medium hover:bg-[var(--accent-hover)] transition-colors whitespace-nowrap shrink-0 disabled:opacity-60"
+              className="w-full inline-flex items-center justify-center gap-2.5 px-5 py-2.5 rounded-lg bg-[var(--accent-primary)] text-white text-sm font-medium hover:bg-[var(--accent-hover)] transition-colors whitespace-nowrap shrink-0 disabled:opacity-60"
             >
               <span>{signingIn ? 'Connecting Account...' : 'Continue with Google Account'}</span>
               <ArrowRight className="w-4 h-4" />
             </button>
-            <span className="text-xs text-[var(--text-muted)]">
-              Version 3.2 · Offline-capable Firestore sync
-            </span>
+
+            <div className="flex items-center gap-3 text-[11px] text-[var(--text-muted)]">
+              <div className="h-px flex-1 bg-[var(--border-hairline)]" />
+              <span>Or sign in with email & password</span>
+              <div className="h-px flex-1 bg-[var(--border-hairline)]" />
+            </div>
+
+            <form onSubmit={handleEmailSignIn} className="space-y-3">
+              <div className="relative">
+                <Mail className="w-4 h-4 text-[var(--text-muted)] absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="email"
+                  required
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="Email address"
+                  className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)]"
+                />
+              </div>
+              <div className="relative">
+                <Lock className="w-4 h-4 text-[var(--text-muted)] absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="password"
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Password"
+                  className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)]"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={emailSubmitting}
+                className="w-full px-4 py-2 text-xs font-medium rounded-lg border border-[var(--border-hairline)] hover:bg-[var(--bg-subtle)] transition-colors disabled:opacity-60"
+              >
+                {emailSubmitting ? 'Signing in...' : 'Sign in with Email'}
+              </button>
+            </form>
           </div>
         </section>
 
@@ -148,7 +220,7 @@ export function AuthGate() {
                 Scoped 10-Role Hierarchy Access
               </h2>
               <p className="text-xs text-[var(--text-secondary)] mt-1 leading-relaxed">
-                Enforced across Mission, Region, District, and Church boundaries with full administrative audit logging.
+                Enforced across Union, Mission, Region, District, and Church boundaries with login approval and administrative audit logging.
               </p>
             </div>
           </div>
