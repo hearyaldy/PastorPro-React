@@ -73,8 +73,12 @@ export const MONTHS = [
   'December',
 ];
 
-export function formatCurrencyRM(amount: number): string {
-  return `RM ${amount.toLocaleString('en-MY', {
+export function formatCurrencyRM(amount?: number | null): string {
+  const val =
+    typeof amount === 'number' && !isNaN(amount)
+      ? amount
+      : Number(amount || 0);
+  return `RM ${val.toLocaleString('en-MY', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;

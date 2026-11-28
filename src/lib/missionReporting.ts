@@ -2,7 +2,7 @@ import type { BorangBReport, Church, District, FinancialReport, Mission, StaffMe
 
 export type ReportingLevel = 'mission' | 'district' | 'church';
 export interface ReportingScope { mission: Mission; level: ReportingLevel; districtId?: string; churchId?: string }
-export const missionLeaders = new Set(['super_admin', 'admin', 'mission_admin', 'ministerial_secretary', 'director', 'officer']);
+export const missionLeaders = new Set(['super_admin', 'admin', 'union_maum', 'mission_admin', 'ministerial_secretary', 'director', 'officer']);
 const normalized = (value: unknown) => String(value ?? '').trim().toLowerCase();
 export const aliases = (entity: { id: string; name: string; code?: string }) => [...new Set([entity.id, entity.name, entity.code].filter((value): value is string => Boolean(value)))];
 export const hasAlias = (value: unknown, entity: { id: string; name: string; code?: string }) => aliases(entity).some(alias => normalized(alias) === normalized(value));
@@ -20,8 +20,9 @@ export function missionEntities(mission: Mission, districts: District[], churche
 }
 export function reportingAccess(profile: UserProfile, mission: Mission, districts: District[], churches: Church[]) {
   const active = profile.isActive && profile.approvalStatus !== 'pending' && profile.approvalStatus !== 'rejected';
-  const sameMission = hasAlias(profile.missionId || profile.missionName, mission);
-  const leadership = active && missionLeaders.has(profile.userRole) && (sameMission || profile.userRole === 'super_admin');
+  const isUnionMaum = profile.userRole === 'union_maum';
+  const sameMission = isUnionMaum || hasAlias(profile.missionId || profile.missionName, mission);
+  const leadership = active && (missionLeaders.has(profile.userRole) || isUnionMaum) && (sameMission || profile.userRole === 'super_admin' || isUnionMaum);
   const assignedChurch = churches.find(item => item.id === profile.churchId)
     || churches.find(item => item.treasurerId === profile.uid);
   const assignedDistrict = districts.find(item => hasAlias(profile.districtId, item))
@@ -34,8 +35,8 @@ export function reportingAccess(profile: UserProfile, mission: Mission, district
       ? churches.filter(item => hasAlias(item.districtId, assignedDistrict)) : assignedChurch ? [assignedChurch] : [];
   return { leadership, assignedChurch, assignedDistrict, districtChoices, churchChoices, canChooseDistrict,
     canCompare: leadership || (active && sameMission && profile.userRole === 'district_pastor'),
-    canWrite: active && (profile.userRole === 'super_admin' || (sameMission && ['admin', 'mission_admin', 'district_pastor', 'church_treasurer'].includes(profile.userRole))),
-    canOverrideMission: active && profile.userRole === 'super_admin' };
+    canWrite: active && (profile.userRole === 'super_admin' || (!isUnionMaum && sameMission && ['admin', 'mission_admin', 'district_pastor', 'church_treasurer'].includes(profile.userRole))),
+    canOverrideMission: active && (profile.userRole === 'super_admin' || isUnionMaum) };
 }
 
 export interface ReportQuerySpec { field: string; value: string | string[]; operator?: '==' | 'in' }

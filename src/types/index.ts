@@ -3,6 +3,7 @@ import type { BorangBForm } from '../lib/borangB';
 export type UserRole =
   | 'super_admin'
   | 'admin'
+  | 'union_maum'
   | 'mission_admin'
   | 'ministerial_secretary'
   | 'director'
@@ -25,6 +26,11 @@ export const ROLE_META: Record<
     label: 'Admin',
     level: 4,
     summary: 'Manage users, missions, hierarchy, and bulk imports',
+  },
+  union_maum: {
+    label: 'Union MAUM',
+    level: 4,
+    summary: 'Union-level read-only access to all mission data across the platform with filter and printing capabilities',
   },
   mission_admin: {
     label: 'Mission Admin',
@@ -127,6 +133,7 @@ function resolveSingleRoleCandidate(value: unknown): UserRole | null {
   }
   const compact = candidate.replace(/[\s_-]+/g, '');
   if (compact === 'superadmin') return 'super_admin';
+  if (compact === 'unionmaum' || compact === 'union_maum') return 'union_maum';
   if (compact === 'missionadmin' || compact === 'missionpresident') return 'mission_admin';
   if (compact === 'ministerialsecretary') return 'ministerial_secretary';
   if (compact === 'districtpastor') return 'district_pastor';
@@ -143,6 +150,7 @@ export function normalizeUserRole(raw: Record<string, unknown>): UserRole {
 export function storedUserRole(role: UserRole): string {
   const names: Partial<Record<UserRole, string>> = {
     super_admin: 'superAdmin',
+    union_maum: 'unionMAUM',
     mission_admin: 'missionAdmin',
     ministerial_secretary: 'ministerialSecretary',
     district_pastor: 'districtPastor',
@@ -173,10 +181,12 @@ export function getCapabilities(user: UserProfile | null): RoleCapabilities {
 
   const r = user.userRole;
   const isSuperOrAdmin = r === 'super_admin' || r === 'admin';
+  const isUnionMaum = r === 'union_maum';
   const isMissionAdmin = r === 'mission_admin';
   const isLeadership =
     isSuperOrAdmin ||
     isMissionAdmin ||
+    isUnionMaum ||
     r === 'ministerial_secretary' ||
     r === 'director' ||
     r === 'officer';
@@ -190,14 +200,14 @@ export function getCapabilities(user: UserProfile | null): RoleCapabilities {
     canManageGlobalEvents: isSuperOrAdmin || isMissionAdmin || r === 'editor',
     canManageResources: isSuperOrAdmin || isMissionAdmin || r === 'editor',
     canManageDepartments: isSuperOrAdmin || isMissionAdmin || r === 'editor',
-    canAccessAllBorangB: isLeadership,
-    canAccessAllFinancialReports: isLeadership,
+    canAccessAllBorangB: isLeadership || isUnionMaum,
+    canAccessAllFinancialReports: isLeadership || isUnionMaum,
     canSubmitFinancialReports:
       isSuperOrAdmin || isMissionAdmin || r === 'church_treasurer',
-    canAccessDepartmentReports: isLeadership || r === 'district_pastor',
+    canAccessDepartmentReports: isLeadership || r === 'district_pastor' || isUnionMaum,
     canSubmitDepartmentReports:
       isSuperOrAdmin || isMissionAdmin || r === 'district_pastor',
-    isReadOnlyOfficer: r === 'officer',
+    isReadOnlyOfficer: r === 'officer' || isUnionMaum,
   };
 }
 

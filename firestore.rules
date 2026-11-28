@@ -61,8 +61,12 @@ service cloud.firestore {
       return isActiveUser() && hasRole(callerDoc(), ['super_admin', 'superAdmin', 'superadmin', 'admin']);
     }
 
+    function isUnionMaum() {
+      return isActiveUser() && hasRole(callerDoc(), ['union_maum', 'unionMAUM', 'unionmaum']);
+    }
+
     function isMissionAdmin() {
-      return isActiveUser() && hasRole(callerDoc(), ['super_admin', 'superAdmin', 'superadmin', 'admin', 'mission_admin', 'missionAdmin', 'missionPresident']);
+      return isActiveUser() && hasRole(callerDoc(), ['super_admin', 'superAdmin', 'superadmin', 'admin', 'union_maum', 'unionMAUM', 'unionmaum', 'mission_admin', 'missionAdmin', 'missionPresident']);
     }
 
     function callerMissionId() {
@@ -74,14 +78,14 @@ service cloud.firestore {
     }
 
     function isMissionAdminFor(missionId) {
-      return isAdmin() || (
+      return isAdmin() || isUnionMaum() || (
         isActiveUser() && hasRole(callerDoc(), ['mission_admin', 'missionAdmin', 'missionPresident']) &&
         missionId is string && missionId.size() > 0 && callerMissionId() == missionId
       );
     }
 
     function isMissionLeadershipFor(missionId) {
-      return isAdmin() || (
+      return isAdmin() || isUnionMaum() || (
         isActiveUser() &&
         hasRole(callerDoc(), ['mission_admin', 'missionAdmin', 'missionPresident', 'ministerial_secretary', 'ministerialSecretary', 'director', 'officer']) &&
         missionId is string && missionId.size() > 0 && callerMissionId() == missionId
@@ -184,7 +188,7 @@ service cloud.firestore {
         data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120 &&
         validOptStr(data, 'photoURL', 500) &&
         validOptStr(data, 'phone', 40) &&
-        data.userRole in ['super_admin', 'superAdmin', 'admin', 'mission_admin', 'missionAdmin', 'missionPresident', 'ministerial_secretary', 'ministerialSecretary', 'director', 'officer', 'editor', 'district_pastor', 'districtPastor', 'church_treasurer', 'churchTreasurer', 'user'] &&
+        data.userRole in ['super_admin', 'superAdmin', 'admin', 'union_maum', 'unionMAUM', 'unionmaum', 'mission_admin', 'missionAdmin', 'missionPresident', 'ministerial_secretary', 'ministerialSecretary', 'director', 'officer', 'editor', 'district_pastor', 'districtPastor', 'church_treasurer', 'churchTreasurer', 'user'] &&
         validOptStr(data, 'role', 64) &&
         nullableOptStr(data, 'roleTitle', 80) &&
         validOptBool(data, 'isAdmin') &&
@@ -390,9 +394,11 @@ service cloud.firestore {
     }
 
     function isDistrictFinancialReader(data) {
-      return hasRole(callerDoc(), ['district_pastor', 'districtPastor']) && isValidId(callerDistrictId()) && (
-        data.get('districtId', '') == callerDistrictId() ||
-        (isValidId(data.get('churchId', '')) && get(/databases/$(database)/documents/churches/$(data.churchId)).data.districtId == callerDistrictId())
+      return isAdmin() || isMissionAdmin() || (
+        hasRole(callerDoc(), ['district_pastor', 'districtPastor']) && isValidId(callerDistrictId()) && (
+          data.get('districtId', '') == callerDistrictId() ||
+          (isValidId(data.get('churchId', '')) && get(/databases/$(database)/documents/churches/$(data.churchId)).data.districtId == callerDistrictId())
+        )
       );
     }
 
@@ -817,11 +823,13 @@ service cloud.firestore {
         !(existing().status in ['approved', 'verified']) && churchMatchesFinancial(incoming()) &&
         (isMissionAdminFor(existing().missionId) || isDistrictPastorFor(existing().districtId) || isChurchTreasurerFor(existing().churchId));
       allow get: if isValidId(reportId) && isActiveUser() && (
+        isAdmin() ||
         existing().submittedBy == request.auth.uid ||
         isChurchTreasurerFor(existing().churchId) ||
         isMissionLeadershipFor(existing().get('missionId', ''))
       );
       allow list: if isActiveUser() && (
+        isAdmin() ||
         existing().submittedBy == request.auth.uid ||
         (hasRole(callerDoc(), ['church_treasurer', 'churchTreasurer']) && existing().churchId == callerDoc().get('churchId', '')) ||
         isMissionLeadershipFor(existing().get('missionId', ''))
@@ -932,11 +940,13 @@ service cloud.firestore {
         churchMatchesFinancial(incoming()) && (isAdmin() || isDistrictPastorFor(incoming().districtId));
 
       allow get: if isValidId(reportId) && isActiveUser() && (
+        isAdmin() ||
         existing().submittedBy == request.auth.uid ||
         isDistrictPastorFor(existing().districtId) ||
         isMissionLeadershipFor(existing().get('missionId', ''))
       );
       allow list: if isActiveUser() && (
+        isAdmin() ||
         existing().submittedBy == request.auth.uid ||
         (hasRole(callerDoc(), ['district_pastor', 'districtPastor']) && existing().districtId == callerDistrictId()) ||
         isMissionLeadershipFor(existing().get('missionId', ''))
